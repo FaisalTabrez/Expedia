@@ -73,15 +73,19 @@ class DiscoveryWorker(QObject):
         kernel_path = os.path.join(os.path.dirname(__file__), "science_kernel.py")
         cmd = [sys.executable, kernel_path]
         
-        # Ensure PYTHONPATH includes project root
+        # Ensure PYTHONPATH includes project root AND Sync Hardware Anchor
         env = os.environ.copy()
+        
+        # @Data-Ops: Sync Root Path to Child Process
+        env["EXPEDIA_ROOT_PATH"] = str(app_config.DATA_ROOT)
+        
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
         if "PYTHONPATH" in env:
             env["PYTHONPATH"] = project_root + os.pathsep + env["PYTHONPATH"]
         else:
             env["PYTHONPATH"] = project_root
 
-        logger.info(f"Launching Science Kernel: {kernel_path}")
+        logger.info(f"Launching Science Kernel: {kernel_path} [Root: {app_config.DATA_ROOT}]")
         
         try:
             # Popen with piping

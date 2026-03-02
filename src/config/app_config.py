@@ -2,21 +2,71 @@ import sys
 import logging
 from pathlib import Path
 import os
+import string
+import ctypes
 
 # -----------------------------------------------------------------------------
-# HARDWARE ANCHOR: VOLUME E:
+# HARDWARE ANCHOR: INTELLIGENT VOLUME DISCOVERY
 # -----------------------------------------------------------------------------
 
-# Primary Data Volume (NTFS required for atomic renames)
-BASE_DRIVE = Path("E:/EXPEDIA")
-_fallback_drive = Path("C:/EXPEDIA_Data") # Dev fallback only
+def detect_expedia_root():
+    """
+    @Data-Ops: Scans available drives for 'EXPEDIA_Data' anchor.
+    Priority: Enviroment Var -> External (D-Z) -> C: Fallback.
+    """
+    # 1. Environment Variable Override (Science Kernel Sync)
+    if "EXPEDIA_ROOT_PATH" in os.environ:
+        override = Path(os.environ["EXPEDIA_ROOT_PATH"])
+        if override.exists():
+            return override
 
-if BASE_DRIVE.exists():
-    DATA_ROOT = BASE_DRIVE
-else:
-    DATA_ROOT = _fallback_drive
+    scanned_locations = []
+    
+    # Get Logical Drives
+    drives = []
+    bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+    for letter in string.ascii_uppercase:
+        if bitmask & 1:
+            drives.append(letter)
+        bitmask >>= 1
+        
+    # 2. Scan External Drives (D: to Z:)
+    # We prioritize E: if available by checking it explicitly or just strictly alpha?
+    # Prompt says: "D: to Z:, then E:, then C:"
+    # This implies D, E, F... Z. So just alphabetical is fine as E is included.
+    # But if we want to ensure E is checked "specifically" or maybe checking D-Z implies E is checked.
+    
+    candidates = [d for d in drives if d >= 'D']
+    for drive in candidates:
+        # Check for 'EXPEDIA_Data'
+        candidate_path = Path(f"{drive}:/EXPEDIA_Data")
+        scanned_locations.append(str(candidate_path))
+        if candidate_path.exists():
+            return candidate_path
 
-# Auxiliary Maps
+    # 3. Fallback: C:/EXPEDIA_Data
+    c_path = Path("C:/EXPEDIA_Data")Discovered Volume
+    scanned_locations.append(str(c_path))
+    if c_path.exists():
+        return c_path
+
+    # 4. Critical Failure
+    drive_list_str = "\n".join(scanned_locations)
+    msg = (
+        f"CRITICAL HARDWARE DISCONNECT\n\n"
+        f"The EXPEDIA_Data anchor volume could not be located.\n"
+        f"Please insert the EXPEDIA Array Drive (USB).\n\n"
+        f"Scanned Locations:\n{drive_list_str}"
+    )
+    # 0x10 = Stop Icon, 0x0 = OK Button
+    ctypes.windll.user32.MessageBoxW(0, msg, "EXPEDIA: HARDWARE FAILURE", 0x10)
+    sys.exit(1)
+
+# Execute Discovery
+DATA_ROOT = detect_expedia_root()
+BASE_DRIVE = DATA_ROOT # Alias check
+
+# Auxiliary Maps (Relative to Discovered Root)
 VECTOR_DB_PATH = DATA_ROOT / "data/db"
 TAXONKIT_EXE = DATA_ROOT / "taxonkit.exe"
 TAXDATA_DIR = DATA_ROOT / "data/taxonomy_db"
