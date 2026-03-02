@@ -1,5 +1,5 @@
 import sys
-from PySide6.QtCore import Qt, QSize, QThread
+from PySide6.QtCore import Qt, QSize, QThread, Signal
 from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import QApplication, QFrame, QVBoxLayout, QLabel
 
@@ -26,6 +26,8 @@ class MainWindow(FluentWindow):
     @WinUI-Fluent: Main Application Shell.
     Manages navigation, worker threads, and global state.
     """
+    request_inference = Signal(str)
+
     def __init__(self):
         super().__init__()
         
@@ -42,7 +44,10 @@ class MainWindow(FluentWindow):
         # Worker Thread Setup
         self.worker_thread = QThread()
         self.worker = DiscoveryWorker()
-        self.worker.moveToThread(self.worker_thread)
+        # Connect Inference Request Signal to Worker Slot
+        self.request_inference.connect(self.worker.run_inference)
+        
+        # self.worker.moveToThread(self.worker_thread)
         
         # Initialize User Interfaces
         self.monitor_interface = MonitorView(self)
@@ -65,25 +70,37 @@ class MainWindow(FluentWindow):
         """
         # Monitor -> Manifold Redirection
         self.monitor_interface.view_topology_requested.connect(self.on_view_topology_requested)
+        
+        # Monitor -> Worker (Start Inference)
+        self.monitor_interface.drop_zone.file_selected.connect(self.start_inference)
+        
+        # Worker Signals
+        self.worker.started.connect(self.on_inference_started)
+        self.worker.sequence_processed.connect(self.on_sequence_processed)
+        self.worker.batch_complete.connect(self.on_batch_complete)
+        self.worker.error.connect(self.on_worker_error)
+        self.worker.progress.connect(self.monitor_interface.progress_bar.setValue)
+        self.worker.kernel_log.connect(self.monitor_interface.log_message)
+        
+        # 3. Inter-View Navigation
+        self.discovery_interface.request_cluster_view.connect(self.on_view_cluster_topology)
 
     def on_view_topology_requested(self, data: dict):
         """
         @UX-Visionary: The 'Jump'.
         Switches to Manifold View and focuses on the sequence's neighborhood.
         """
+        if not data:
+            return
+
         seq_id = data.get("id", "Unknown")
         vector = data.get("vector") # Ensure science kernel passes this
         
         if vector is None:
-            # Fallback if vector isn't in display data, mostly likely it is not there to save memory
-            # But for this feature we assume it's available or we query it. 
-            # For now, let's assume it might be missing and handle gracefully or mock.
-            from PySide6.QtWidgets import QMessageBox
-            # In a real app we'd query the DB by ID.
+            # Fallback for now
             pass
 
-        # 1. Switch Tab (Index 1 is Manifold, based on addSubInterface order)
-        # However, FluentWindow manages stack by routing key or object.
+        # 1. Switch Tab (Index 1 is Manifold)
         self.switchTo(self.manifold_interface)
         
         # 2. Visual Confirmation
@@ -93,6 +110,14 @@ class MainWindow(FluentWindow):
             content=f"EXPLORING TOPOLOGY FOR SEQUENCE [{seq_id}]",
             orient=Qt.Orientation.Horizontal,
             isClosable=True,
+            position=InfoBarPosition.TOP_RIGHT,
+            duration=3000,
+            parent=self
+        ).show()
+        
+        # 3. Trigger Manifold Update
+        if vector is not None:
+             self.manifold_interface.generate_neighborhood_view(seq_id, vector)
             position=InfoBarPosition.TOP_RIGHT,
             duration=3000,
             parent=self
@@ -202,32 +227,6 @@ class MainWindow(FluentWindow):
                      f"STORAGE: {drive_name} ({free_gb:.1f} GB FREE)"
                  )
                  sb.showMessage(status_msg)
-
-    # Note: init_signals is defined at class level. We should merge or remove the second one.
-    # The first one (line 62) sets up the topology redirection.
-    # The second one (line 209) is a placeholder or legacy.
-    # We will remove the legacy one.
-    
-    def start_inference_from_file(self, file_path):
-        """
-        [Replaces duplicate init_signals logic]
-        """
-        # Connect to worker...
-        pass
-        self.monitor_interface.drop_zone.browse_btn.clicked.connect(self.start_inference_demo)
-
-        # 2. Worker Signals
-        self.worker.started.connect(self.on_inference_started)
-        self.worker.sequence_processed.connect(self.on_sequence_processed)
-        self.worker.batch_complete.connect(self.on_batch_complete)
-        self.worker.error.connect(self.on_worker_error)
-        self.worker.progress.connect(self.monitor_interface.progress_bar.setValue)
-        self.worker.kernel_log.connect(self.monitor_interface.log_message)
-        
-        # 3. Inter-View Navigation
-        # Connecting Discovery Card 'View Manifold' button is tricky as cards are dynamic.
-        # But DiscoveryView has a signal 'request_cluster_view' we can use.
-        self.discovery_interface.request_cluster_view.connect(self.on_view_cluster_topology)
 
     def start_inference_demo(self):
         # basic file dialog to pick a file

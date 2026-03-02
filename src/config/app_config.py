@@ -45,7 +45,7 @@ def detect_expedia_root():
             return candidate_path
 
     # 3. Fallback: C:/EXPEDIA_Data
-    c_path = Path("C:/EXPEDIA_Data")Discovered Volume
+    c_path = Path("C:/EXPEDIA_Data")
     scanned_locations.append(str(c_path))
     if c_path.exists():
         return c_path

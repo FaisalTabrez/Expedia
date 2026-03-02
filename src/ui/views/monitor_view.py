@@ -16,6 +16,8 @@ class DropZone(QFrame):
     @WinUI-Fluent: Ingestion Zone.
     Supports file browsing and visual drop indication.
     """
+    file_selected = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("DropZone")
@@ -39,10 +41,25 @@ class DropZone(QFrame):
         
         self.browse_btn = PrimaryPushButton(FIF.FOLDER, "SELECT SEQUENCE FILE", self)
         self.browse_btn.setFixedWidth(200)
+        self.browse_btn.clicked.connect(self.select_file)
         
         layout.addWidget(self.label)
         layout.addSpacing(10)
         layout.addWidget(self.browse_btn)
+
+    def select_file(self):
+        from PySide6.QtWidgets import QFileDialog
+        from ...config import app_config
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Sequence File",
+            str(app_config.DATA_ROOT), # Start in project root
+            "Genomic Sequences (*.fasta *.fastq *.txt)"
+        )
+        
+        if file_path:
+            self.file_selected.emit(file_path)
 
 class DiscoveryCard(CardWidget):
     """
