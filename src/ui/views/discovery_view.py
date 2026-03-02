@@ -22,7 +22,7 @@ class SessionSummaryPanel(QFrame):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(80)
+        self.setFixedHeight(120)  # slightly taller for info
         self.setStyleSheet(f"background-color: {app_config.THEME_COLORS['background']}; border-bottom: 1px solid #333;")
         
         layout = QHBoxLayout(self)
@@ -48,10 +48,11 @@ class SessionSummaryPanel(QFrame):
 
     def _create_stat(self, title, value, color="#FFFFFF"):
         container = QVBoxLayout()
+        container.setSpacing(2)
         t_lbl = CaptionLabel(title, self)
-        t_lbl.setStyleSheet("color: #888; font-family: 'Consolas';")
+        t_lbl.setStyleSheet("color: #888; font-family: 'Consolas'; font-size: 10px;")
         v_lbl = TitleLabel(value, self)
-        v_lbl.setStyleSheet(f"color: {color}; font-family: 'Consolas';")
+        v_lbl.setStyleSheet(f"color: {color}; font-family: 'Consolas'; font-size: 24px;")
         container.addWidget(t_lbl)
         container.addWidget(v_lbl)
         return container, v_lbl
@@ -63,82 +64,91 @@ class SessionSummaryPanel(QFrame):
 
 class NTUCard(CardWidget):
     """
-    @Bio-Taxon: NTU Discovery Card.
-    Visualizes a Novel Taxonomic Unit cluster found by HDBSCAN.
-    Includes Divergence Gauge and Manifold Link.
+    @Bio-Taxon: NTU Satellite Cluster Card.
+    Represents an aggregated group of Non-Reference Taxa.
     """
-    view_manifold_signal = Signal(dict) # Emits cluster data
+    view_manifold_signal = Signal(dict)
 
     def __init__(self, ntu_data, parent=None):
         super().__init__(parent)
         self.ntu_data = ntu_data
-        self.setFixedSize(320, 220)
+        self.setFixedSize(360, 240) # Standard Card Size
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(6)
         
-        # Header: ID and Anchor
-        header = QHBoxLayout()
-        id_label = SubtitleLabel(ntu_data.get("ntu_id", "Unknown NTU").upper(), self)
-        id_label.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-weight: bold; font-family: 'Consolas';")
-        header.addWidget(id_label)
-        header.addStretch()
-        layout.addLayout(header)
+        # 1. Header: EXPEDIA-NTU ID
+        ntu_id = ntu_data.get("ntu_id", "UNKNOWN-NTU")
+        # Ensure format consistency
+        if "EXPEDIA-NTU" not in ntu_id:
+             ntu_id = f"EXPEDIA-NTU-{ntu_id}"
+             
+        self.id_label = SubtitleLabel(ntu_id, self)
+        self.id_label.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-family: 'Consolas'; font-weight: bold; font-size: 13px;")
+        layout.addWidget(self.id_label)
         
-        # Anchor Taxon (Classification)
+        # 2. Anchor Taxon
         anchor = ntu_data.get("anchor_taxon", "Unresolved").upper()
-        anchor_lbl = CaptionLabel(f"ANCHOR: {anchor}", self)
-        anchor_lbl.setStyleSheet("color: #AAA; font-family: 'Consolas'; font-weight: bold;")
-        layout.addWidget(anchor_lbl)
+        # "PHYLOGENETIC ANCHOR: [FAMILY]"
+        self.anchor_label = CaptionLabel(f"PHYLOGENETIC ANCHOR: {anchor}", self)
+        self.anchor_label.setStyleSheet("color: #CCCCCC; font-family: 'Segoe UI'; font-weight: 600; font-size: 10px; letter-spacing: 0.5px;")
+        layout.addWidget(self.anchor_label)
         
-        # Lineage Breadcrumb
-        lineage = ntu_data.get("lineage", "").replace(" > ", " › ")
-        if lineage:
-            # Elide if too long
-            fm = self.fontMetrics()
-            elided = fm.elidedText(lineage, Qt.TextElideMode.ElideRight, 290)
-            
-            lineage_lbl = CaptionLabel(elided, self)
-            lineage_lbl.setToolTip(lineage)
-            lineage_lbl.setStyleSheet("color: #888888; font-style: italic;")
-            layout.addWidget(lineage_lbl)
+        layout.addSpacing(4)
         
-        # Population Size
+        # 3. Metrics Grid
+        metrics_container = QWidget()
+        metrics_layout = QGridLayout(metrics_container)
+        metrics_layout.setContentsMargins(0,0,0,0)
+        metrics_layout.setVerticalSpacing(4)
+        
+        # POPULATION
         pop_size = ntu_data.get("size", 0)
-        pop_lbl = CaptionLabel(f"CLUSTER POPULATION: {pop_size} SEQUENCES", self)
-        pop_lbl.setStyleSheet("font-family: 'Consolas';")
-        layout.addWidget(pop_lbl)
+        metrics_layout.addWidget(CaptionLabel("POPULATION", self), 0, 0)
+        pop_val = TitleLabel(f"{pop_size}", self)
+        pop_val.setStyleSheet("font-size: 18px;")
+        metrics_layout.addWidget(pop_val, 1, 0)
         
-        # Divergence Gauge
-        div_layout = QVBoxLayout()
-        div_lbl = CaptionLabel("MEAN SEMANTIC DIVERGENCE", self)
+        # GENOMIC VARIANCE
+        divergence = float(ntu_data.get("divergence", 0.0))
+        metrics_layout.addWidget(CaptionLabel("GENOMIC VARIANCE", self), 0, 1)
+        div_val = TitleLabel(f"{divergence:.4f}", self) # Variance is usually small (e.g. 0.05)
+        # Color code variance
+        var_color = "#00FF00" # Green (Tight)
+        if divergence > 0.5: var_color = app_config.THEME_COLORS['accent'] # Yellow/Cyan
+        if divergence > 1.0: var_color = "#FF4444" # Red (Loose)
         
-        self.div_bar = ProgressBar(self)
-        self.div_bar.setRange(0, 100)
+        div_val.setStyleSheet(f"font-size: 18px; color: {var_color};")
+        metrics_layout.addWidget(div_val, 1, 1)
         
-        # Divergence is usually distance. 
-        # Assuming ntu_data has 'divergence' (0.0 to 1.0, where 1.0 is far)
-        divergence = ntu_data.get("divergence", 0.15) # Default low divergence
-        pct = int(divergence * 100)
-        self.div_bar.setValue(pct)
-        # Custom style for bar color based on divergence severity
-        if pct > 20:
-             self.div_bar.setCustomBarColor(QColor(app_config.THEME_COLORS['accent']), QColor(app_config.THEME_COLORS['accent']))
-        
-        div_layout.addWidget(div_lbl)
-        div_layout.addWidget(self.div_bar)
-        layout.addLayout(div_layout)
+        layout.addWidget(metrics_container)
         
         layout.addStretch()
         
-        # Action Button
-        self.btn_view = PrimaryPushButton(FIF.GLOBE, "VIEW CLUSTER MANIFOLD", self)
-        self.btn_view.clicked.connect(self._on_view_clicked)
-        layout.addWidget(self.btn_view)
+        # 4. Action Button
+        self.btn_explore = PrimaryPushButton(FIF.GLOBE, "EXPLORE NTU TOPOLOGY", self)
+        if ntu_data.get("centroid_vector") is None:
+             self.btn_explore.setText("VECTOR UNAVAILABLE")
+             self.btn_explore.setEnabled(False)
+             
+        self.btn_explore.clicked.connect(self._on_explore)
+        layout.addWidget(self.btn_explore)
 
-    def _on_view_clicked(self):
-        self.view_manifold_signal.emit(self.ntu_data)
+    def _on_explore(self):
+        """Prepare data payload for Manifold View."""
+        # We need to construct a payload that render_manifold understands
+        # { "query": { "coords": [...], "label": ... }, "neighbors": [...] }
+        # Since we don't have neighbors here, we trigger the async fetch.
+        # Signal carries: ID, Vector, and context.
+        
+        payload = {
+            "type": "ntu_inspection",
+            "id": self.ntu_data.get("centroid_id"), # Holotype ID
+            "vector": self.ntu_data.get("centroid_vector"), # Holotype Vector
+            "ntu_id": self.ntu_data.get("ntu_id")
+        }
+        self.view_manifold_signal.emit(payload)
 
 class DiscoveryView(QWidget):
     """
@@ -181,10 +191,12 @@ class DiscoveryView(QWidget):
         # State Tracking
         self.ntu_cards = []
 
-    def populate_ntus(self, ntu_list: list):
+    def populate_ntus(self, ntu_list: list, isolated_taxa: list = None):
         """
         Clears grid and repopulates with NTU cards.
         """
+        isolated_taxa = isolated_taxa or []
+
         # Clear existing
         for i in reversed(range(self.grid_layout.count())): 
             item = self.grid_layout.itemAt(i)
@@ -194,7 +206,36 @@ class DiscoveryView(QWidget):
         
         self.ntu_cards = []
 
-        if not ntu_list:
+        is_isolated_mode = False
+        display_list = []
+        
+        if ntu_list:
+            display_list = ntu_list
+        elif isolated_taxa:
+            is_isolated_mode = True
+            # Convert Isolated Taxa to Pseudo-Clusters
+            for taxon in isolated_taxa:
+                display_list.append({
+                    "ntu_id": taxon.get("id", "UNKNOWN"),
+                    "anchor_taxon": taxon.get("classification", "Unknown"),
+                    "lineage": taxon.get("lineage", ""),
+                    "size": 1,
+                    "divergence": 1.0, # High Divergence
+                    "centroid": None   # No Vector
+                })
+            
+            # Show InfoBar Warning
+            InfoBar.warning(
+                title="NO STABLE BIOLOGICAL CLUSTERS FOUND",
+                content=f"DISPLAYING {len(isolated_taxa)} ISOLATED DARK TAXA.",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=8000,
+                parent=self
+            )
+        else:
+            # Empty
             self.grid_layout.addWidget(self.empty_label, 0, 0)
             self.empty_label.show()
             return
@@ -203,10 +244,15 @@ class DiscoveryView(QWidget):
         
         # Grid Logic (Responsive-ish: 3 columns)
         cols = 3
-        for idx, ntu in enumerate(ntu_list):
-            card = NTUCard(ntu, self.grid_container)
+        for idx, ntu_data in enumerate(display_list):
+            card = NTUCard(ntu_data, self.grid_container)
             card.view_manifold_signal.connect(self.request_cluster_view.emit)
             
+            # Disable Manifold Jump if no vector available
+            if ntu_data.get("centroid") is None:
+                card.btn_view.setText("VECTOR UNAVAILABLE")
+                card.btn_view.setEnabled(False)
+
             row = idx // cols
             col = idx % cols
             self.grid_layout.addWidget(card, row, col)

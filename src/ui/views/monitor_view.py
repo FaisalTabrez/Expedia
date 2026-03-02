@@ -182,7 +182,7 @@ class BatchSummary(QFrame):
         self.novel_label.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-weight: bold; font-family: 'Consolas';")
         
         # Action
-        self.report_btn = PrimaryPushButton(FIF.DOCUMENT, "GENERATE EXPEDITION REPORT", self)
+        self.report_btn = PrimaryPushButton(FIF.SHARE, "EXPORT ANALYSIS DATA", self)
         self.report_btn.setFixedSize(240, 32)
         self.report_btn.clicked.connect(self.request_report.emit)
         

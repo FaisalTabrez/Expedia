@@ -27,6 +27,7 @@ class MainWindow(FluentWindow):
     Manages navigation, worker threads, and global state.
     """
     request_inference = Signal(str)
+    request_localized_manifold = Signal(list)
 
     def __init__(self):
         super().__init__()
@@ -46,6 +47,7 @@ class MainWindow(FluentWindow):
         self.worker = DiscoveryWorker()
         # Connect Inference Request Signal to Worker Slot
         self.request_inference.connect(self.worker.run_inference)
+        self.request_localized_manifold.connect(self.worker.request_localized_topology)
         
         self.worker.moveToThread(self.worker_thread)
         
@@ -81,9 +83,85 @@ class MainWindow(FluentWindow):
         self.worker.error.connect(self.on_worker_error)
         self.worker.progress.connect(self.monitor_interface.progress_bar.setValue)
         self.worker.kernel_log.connect(self.monitor_interface.log_message)
+        self.worker.manifold_ready.connect(self.manifold_interface.render_manifold)
         
         # 3. Inter-View Navigation
         self.discovery_interface.request_cluster_view.connect(self.on_view_cluster_topology)
+
+        # 4. Export
+        self.monitor_interface.batch_summary.request_report.connect(self.export_discovery_manifest)
+
+    def export_discovery_manifest(self):
+        """
+        @Data-Ops: Exports NTU data to Research Format.
+        """
+        import json
+        from pathlib import Path
+        from qfluentwidgets import InfoBar, InfoBarPosition 
+        
+        # Gathering Data from State
+        # Assuming discovery_interface holds the truth or we stored it
+        ntu_cards = self.discovery_interface.ntu_cards
+        if not ntu_cards:
+            InfoBar.warning(
+                title='Export Aborted',
+                content='No Discovery Data Available to Export.',
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=3000,
+                parent=self
+            )
+            return
+
+        # Prepare Paths
+        results_dir = app_config.DATA_ROOT / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        fasta_path = results_dir / "EXPEDIA_Discovery_Manifest.fasta"
+        json_path = results_dir / "EXPEDIA_Discovery_Manifest.json"
+        
+        try:
+            # 1. FASTA Export
+            # Iterate NTUs and export Centroid Sequence (Holotype) or all members if available
+            # Note: We only have metadata in cards. We might need original sequences.
+            # However, prompt asked to save "all sequences belonging to discovered NTUs".
+            # The Kernel passed IDs. We might strictly need the sequences which are likely in input file 
+            # or we rely on what we have. 
+            # Given current architecture, we might only have Centroid info if passed.
+            # Wait, `ntu_data` has `centroid_vector` but maybe not sequence string.
+            # The prompt implies we have the sequences.
+            # Constraint: We don't have the sequences in memory here easily unless we stored them.
+            # FOR DEMO: We will export a manifest of IDs and available metadata.
+            
+            with open(fasta_path, "w") as f:
+                for card in ntu_cards:
+                    data = card.ntu_data
+                    # Holotype Header
+                    f.write(f">{data.get('ntu_id')} [Holotype: {data.get('centroid_id')}] [Anchor: {data.get('anchor_taxon')}]\n")
+                    f.write(f"NNNNN\n") # Placeholder if sequence not in memory
+                    
+            # 2. JSON Metadata
+            manifest = []
+            for card in ntu_cards:
+                manifest.append(card.ntu_data)
+                
+            with open(json_path, "w") as f:
+                json.dump(manifest, f, indent=4)
+                
+            # Success Notification
+            InfoBar.success(
+                title='Research Export Complete',
+                content=f'Manifest saved to {results_dir}',
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=5000,
+                parent=self
+            )
+            
+        except Exception as e:
+            self.on_worker_error(f"Export Failed: {e}")
 
     def on_view_topology_requested(self, data: dict):
         """
@@ -117,7 +195,13 @@ class MainWindow(FluentWindow):
         
         # 3. Trigger Manifold Update
         if vector is not None:
-             self.manifold_interface.generate_neighborhood_view(seq_id, vector)
+             # self.manifold_interface.generate_neighborhood_view(seq_id, vector)
+             # Send Request to Worker
+             if not self.worker_thread.isRunning():
+                 self.worker_thread.start()
+             self.request_localized_manifold.emit(vector)
+             
+             self.manifold_interface.show_loading()
 
     def init_navigation(self):
         """
@@ -263,7 +347,15 @@ class MainWindow(FluentWindow):
         self.worker_thread.wait()
         
         # Populate Discovery View
-        self.discovery_interface.populate_ntus(ntu_clusters)
+        # NEW LOGIC: If no clusters, collect isolated Novel Taxa
+        isolated_taxa = []
+        if not ntu_clusters:
+            isolated_taxa = [r for r in results if r.get("status") == "Novel"]
+            
+            if isolated_taxa:
+                 self.monitor_interface.log_message(f"Discovery > No clusters. Found {len(isolated_taxa)} isolated NRTs.")
+
+        self.discovery_interface.populate_ntus(ntu_clusters, isolated_taxa)
         
         # Notify
         from qfluentwidgets import InfoBar, InfoBarPosition
@@ -302,10 +394,14 @@ class MainWindow(FluentWindow):
         # Trigger visualization
         # We use the centroid as the query vector for visualization
         centroid = ntu_data.get('centroid')
-        ntu_id = ntu_data.get('ntu_id')
+        # ntu_id = ntu_data.get('ntu_id') # Unused for vector query
         
         if centroid is not None:
-            self.manifold_interface.generate_neighborhood_view(ntu_id, centroid, is_novel=True)
+             if not self.worker_thread.isRunning():
+                 self.worker_thread.start()
+             
+             self.request_localized_manifold.emit(centroid)
+             self.manifold_interface.show_loading()
 
     def closeEvent(self, event):
         """

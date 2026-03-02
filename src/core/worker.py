@@ -31,6 +31,7 @@ class DiscoveryWorker(QObject):
     error = Signal(str)
     progress = Signal(int)
     kernel_log = Signal(str)                # New signal for raw kernel logs
+    manifold_ready = Signal(dict)           # Emits Localized Topology JSON
     finished = Signal()
 
     def __init__(self):
@@ -166,9 +167,26 @@ class DiscoveryWorker(QObject):
                         
                     elif msg_type == "discovery_results":
                         # HDBSCAN Output
-                        ntu_clusters = message.get("data", [])
-                        logger.info(f"Received {len(ntu_clusters)} Discovery Clusters from Kernel.")
+                        # Legacy format support
+                        ntu_clusters.extend(message.get("data", []))
+                        logger.info(f"Received {len(ntu_clusters)} Discovery Clusters from Kernel (Legacy).")
+
+                    elif msg_type == "batch_discovery_summary":
+                        # Full Satellite Cluster Aggregation
+                        ntus = message.get("ntus", [])
+                        isolated_count = message.get("isolated_count", 0)
                         
+                        logger.info(f"Received Discovery Summary: {len(ntus)} NTUs, {isolated_count} Isolated.")
+                        
+                        # Store for batch_complete emit
+                        ntu_clusters = ntus 
+                        # We could also expose isolated taxa if needed, but UI primarily wants clusters
+
+                    elif msg_type == "manifold_data":
+                        # Manifold Output
+                        logger.info("Localized Manifold Calculated.")
+                        self.manifold_ready.emit(message)
+
                     elif msg_type == "finished":
                         logger.info("Kernel finished processing.")
                         break
@@ -199,6 +217,88 @@ class DiscoveryWorker(QObject):
             self.stop_kernel()
             self._is_running = False
 
+    def request_localized_topology(self, vector: list):
+        """
+        Runs the 'get_localized_topology' command cleanly.
+        Does NOT block the main thread.
+        Reuse existing process or start new one.
+        """
+        self._is_running = True
+        
+        # 1. Start Subprocess (Isolated Python Environment)
+        python_exe = sys.executable 
+        kernel_path = Path(__file__).parent / "science_kernel.py"
+        
+        try:
+            self._process = subprocess.Popen(
+                [python_exe, str(kernel_path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                encoding='utf-8' # Force UTF-8 for JSON
+            )
+            
+            # Assert pipes for type safety
+            if not self._process.stdout or not self._process.stdin:
+                raise RuntimeError("Failed to open pipes to Science Kernel")
+
+            # 3. Handshake & Command
+            # Read stdout until {"type": "status", "status": "ready"}
+            while True:
+                ready_line = self._process.stdout.readline()
+                if not ready_line:
+                    raise RuntimeError("Science Kernel failed to start (EOF).")
+                
+                try:
+                    msg = json.loads(ready_line)
+                    if msg.get("type") == "status" and msg.get("status") == "ready":
+                         break
+                except json.JSONDecodeError:
+                     pass
+
+            # Send Command
+            command = json.dumps({
+                "command": "get_localized_topology",
+                "vector": vector,
+                "k": 500
+            })
+            self._process.stdin.write(command + "\n")
+            self._process.stdin.flush()
+            
+            # 4. Event Loop (Reading Output)
+            while self._is_running:
+                # Blocking read (line by line)
+                line = self._process.stdout.readline()
+                
+                if not line:
+                    break
+
+                try:
+                    message = json.loads(line)
+                    msg_type = message.get("type")
+                    
+                    if msg_type == "manifold_data":
+                        # Manifold Output
+                        logger.info("Localized Manifold Calculated.")
+                        self.manifold_ready.emit(message)
+                        break
+
+                    elif msg_type == "error":
+                        err_msg = message.get("message", "Unknown Kernel Error")
+                        self.error.emit(f"Science Kernel: {err_msg}")
+                        break
+                        
+                except json.JSONDecodeError:
+                    pass
+            
+        except Exception as e:
+            logger.error(f"Worker Orchestration Error: {e}")
+            self.error.emit(str(e))
+        finally:
+            self.stop_kernel()
+            self._is_running = False
 
     def stop_kernel(self):
         """Terminates the subprocess safely."""

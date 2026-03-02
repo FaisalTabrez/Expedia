@@ -139,106 +139,166 @@ class ManifoldView(QWidget):
              if hasattr(self.web_view, 'label'):
                 self.web_view.label.setText("SELECT A SEQUENCE FROM THE MONITOR TO EXPLORE GENOMIC TOPOLOGY (STATIC MODE)")
 
+    def show_loading(self):
+        """Displays loading state."""
+        logger.info("Showing loading state for manifold view")
+        if WEB_ENGINE_AVAILABLE:
+            html = f"""
+            <html>
+            <head>
+            <style>
+                body {{ background-color: {app_config.THEME_COLORS['background']}; color: #00E5FF; font-family: 'Consolas', monospace; display: flex; flexDirection: column; justify-content: center; align-items: center; height: 100vh; margin: 0; }}
+                h2 {{ font-weight: normal; font-size: 20px; letter-spacing: 2px; }}
+            </style>
+            </head>
+            <body>
+                <h2>CALCULATING MICRO-TOPOLOGY...</h2>
+                <p style="color: #666; font-size: 14px;">(HDBSCAN Clustering + Local PCA)</p>
+            </body>
+            </html>
+            """
+            self.web_view.setHtml(html)
+        else:
+            if hasattr(self.web_view, 'label'):
+                self.web_view.label.setText("CALCULATING MICRO-TOPOLOGY... (STATIC MODE)")
 
     def generate_neighborhood_view(self, query_id: str, query_vector: np.ndarray, is_novel: bool = False):
         """
-        Calculates local PCA and renders the 3D plot.
+        Legacy local calculation. Delegating to render_manifold via warning to update calling code.
         """
-        logger.info(f"Generating manifold for {query_id}")
-        self.has_content = True
-        self.current_query_vector = query_vector
+        logger.warning(f"Deprecated 'generate_neighborhood_view' called for {query_id}. Update caller to use async 'request_localized_topology'.")
+        # Can't do much here because we don't have neighbors.
+        # Just show loading until the async worker comes back (if it was triggered separately).
+        self.show_loading()
 
+    def render_manifold(self, data: dict):
+        """
+        Renders the 3D plot from Kernel JSON data.
+        """
+        logger.info("Rendering Manifold from Kernel Data")
+        self.has_content = True
+        
         try:
-            # 1. Fetch Neighbors (500 for context)
-            df_neighbors = self.db.vector_search(query_vector, top_k=500)
+            # 1. Parse Data
+            query_point = data.get("query")
+            neighbors = data.get("neighbors", [])
+            consensus = data.get("consensus", "Analyzing...")
             
-            if df_neighbors.empty:
-                logger.warning("No neighbors found for manifold view.")
+            if not query_point or not neighbors:
+                logger.warning("Manifold data missing query point or neighbors.")
+                self.show_empty_state()
                 return
 
-            # 2. Prepare Data for PCA
-            # Query vector needs to be part of the set to be projected
-            # Assuming 'vector' column exists in dataframe and is a list/array
-            # If LanceDB returns 'vector' as a column.
-            
-            # Extract vectors from dataframe. 
-            # Note: Depending on LanceDB version/config, vector might not be returned by default unless requested
-            # For this 'mock' implementation, we assume column 'vector' exists or we can't project.
-            # If not available, we can't do PCA.
-            
-            if 'vector' not in df_neighbors.columns:
-                 # If vectors aren't returned, we might need to re-query or handle error
-                 # For now, let's assume we have them or mock them for the UI demo if DB is empty
-                 logger.warning("Vector column missing from search results. Cannot project.")
-                 return
-
-            neighbor_vectors = np.stack(df_neighbors['vector'].tolist())
-            all_vectors = np.vstack([query_vector, neighbor_vectors])
-            
-            # 3. Apply Localized PCA (768 -> 3)
-            pca = PCA(n_components=3)
-            principal_components = pca.fit_transform(all_vectors)
-            
-            # Split back
-            query_pc = principal_components[0]
-            neighbors_pc = principal_components[1:]
-            
-            # 4. Create Plotly Figure
+            # 2. Create Plotly Figure
             fig = go.Figure()
 
-            # A. Neighbors (Small Bioluminescent Spheres)
-            fig.add_trace(go.Scatter3d(
-                x=neighbors_pc[:, 0],
-                y=neighbors_pc[:, 1],
-                z=neighbors_pc[:, 2],
-                mode='markers',
-                marker=dict(
-                    size=4,
-                    color='#00E5FF', # Cyan
-                    opacity=0.4,
-                    line=dict(width=0)
-                ),
-                text=df_neighbors.get('species', df_neighbors.get('id', 'Unknown')),
-                name='Reference Neighbors'
-            ))
+            # A. Neighbors
+            if neighbors:
+                x_vals = [n['coords'][0] for n in neighbors if n.get('coords')]
+                y_vals = [n['coords'][1] for n in neighbors if n.get('coords')]
+                z_vals = [n['coords'][2] for n in neighbors if n.get('coords')]
+                
+                text_vals = [f"{n.get('classification', 'Unknown')}<br>{n.get('lineage','')}" for n in neighbors]
+                
+                fig.add_trace(go.Scatter3d(
+                    x=x_vals, y=y_vals, z=z_vals,
+                    mode='markers',
+                    marker=dict(
+                        size=4,
+                        color='#00E5FF', # Cyan base
+                        opacity=0.6,
+                        line=dict(width=0)
+                    ),
+                    text=text_vals,
+                    name='Neighborhood'
+                ))
 
-            # B. Query (Large Glowing Neon Star)
-            query_color = app_config.THEME_COLORS['accent'] if is_novel else app_config.THEME_COLORS['primary']
-            symbol = 'diamond' if is_novel else 'cross'
+            # B. Query Point (Large Neon Star)
+            q_coords = query_point.get("coords")
+            if not q_coords:
+                 logger.error("Query point has no coordinates.")
+                 self.show_empty_state()
+                 return # Exit early
+
+            q_label = query_point.get("label", -1)
+            
+            query_color = '#FF007A' # Neon Pink
+            symbol = 'diamond'
             
             fig.add_trace(go.Scatter3d(
-                x=[query_pc[0]],
-                y=[query_pc[1]],
-                z=[query_pc[2]],
+                x=[q_coords[0]], y=[q_coords[1]], z=[q_coords[2]],
                 mode='markers',
                 marker=dict(
-                    size=12,
+                    size=14,
                     color=query_color,
                     symbol=symbol,
                     opacity=1.0,
-                    line=dict(
-                        color='#FFFFFF',
-                        width=2
-                    )
+                    line=dict(color='#FFFFFF', width=2)
                 ),
-                text=[f"QUERY: {query_id}"],
+                text=["QUERY SEQUENCE"],
                 name='Active Sequence'
             ))
+            
+            # C. Dashed Line to Nearest Neighbor
+            if neighbors:
+                # Neighbors are ordered by distance (implied by vector search return order)
+                nn = neighbors[0] 
+                nn_coords = nn.get('coords')
+                
+                if nn_coords:
+                    fig.add_trace(go.Scatter3d(
+                        x=[q_coords[0], nn_coords[0]],
+                        y=[q_coords[1], nn_coords[1]],
+                        z=[q_coords[2], nn_coords[2]],
+                        mode='lines',
+                        line=dict(
+                            color='#AAAAAA',
+                            width=3,
+                            dash='dash'
+                        ),
+                        name='Evolutionary Distance'
+                    ))
+
+            # D. Cluster Hull (if specific cluster found)
+            if q_label != -1:
+                cluster_points = [n['coords'] for n in neighbors if n.get('label') == q_label and n.get('coords')]
+                if len(cluster_points) > 4: # Need min points for hull
+                     pts = np.array(cluster_points)
+                     # Add query to hull
+                     pts = np.vstack([pts, q_coords])
+                     
+                     try:
+                         fig.add_trace(go.Mesh3d(
+                            x=pts[:,0], y=pts[:,1], z=pts[:,2],
+                            opacity=0.1,
+                            color='#FF007A',
+                            alphahull=0, # Convex Hull
+                            name='Convergent Cluster'
+                         ))
+                     except Exception as hull_err:
+                         logger.warning(f"Hull calculation failed (collinear?): {hull_err}")
+            
+            # E. Consensus Annotation
+            fig.add_annotation(
+                text=f"LOCAL CONSENSUS:<br>{consensus}",
+                xref="paper", yref="paper",
+                x=0.02, y=0.98,
+                showarrow=False,
+                font=dict(family="Consolas", size=14, color="#00E5FF"),
+                align="left",
+                bgcolor=app_config.THEME_COLORS['background'],
+                bordercolor="#333",
+                borderwidth=1,
+                borderpad=10
+            )
 
             # Styling
             self.update_plot(fig)
 
         except Exception as e:
             logger.error(f"Manifold Generation Error: {e}")
-            InfoBar.error(
-                title='Rendering Error',
-                content=str(e),
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                parent=self
-            )
-
+            self.show_empty_state()
+    
     def update_plot(self, fig: go.Figure):
         """
         Serializes Plotly figure and updates the WebEngineView.

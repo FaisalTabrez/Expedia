@@ -6,6 +6,7 @@ import logging
 import traceback
 import numpy as np
 import pandas as pd
+from collections import Counter
 
 # Configure logging to stderr to keep stdout clean for JSON IPC
 # 1. Clear any existing handlers (e.g. from imports)
@@ -80,6 +81,9 @@ try:
 
     safe_ipc_write(json.dumps({"type": "log", "message": "Importing Discovery..."}) + "\n")
     from src.core.discovery import DiscoveryEngine
+    
+    safe_ipc_write(json.dumps({"type": "log", "message": "Importing Sklearn..."}) + "\n")
+    from sklearn.decomposition import PCA
 
     safe_ipc_write(json.dumps({"type": "log", "message": "Imports Complete."}) + "\n")
 
@@ -147,6 +151,10 @@ class ScienceKernel:
 
                 if cmd_type == "process_fasta":
                     self.process_fasta(command.get("file_path"))
+                elif cmd_type == "get_localized_topology":
+                    vector = command.get("vector")
+                    k = command.get("k", 500)
+                    self.get_localized_topology(vector, k)
                 elif cmd_type == "shutdown":
                     logger.info("Shutdown command received.")
                     break
@@ -207,22 +215,261 @@ class ScienceKernel:
 
             # Process remaining
             if batch_seqs:
-                self._process_batch(batch_seqs, batch_ids, nrt_vectors, nrt_ids, nrt_meta)
+                self._process_batch(batch_seqs, batch_ids, nrt_vectors, nrt_ids, nrt_meta) # type: ignore
 
             # Final Step: Discovery on NRTs
-            if self.discovery and nrt_vectors:
-                # Pass accumulated vectors + ids + metadata
-                self._run_discovery(nrt_vectors, nrt_ids, nrt_meta)
-
-            if sys.__stdout__:
-                sys.__stdout__.write(json.dumps({"type": "finished", "file_path": file_path}) + "\n")
-                sys.__stdout__.flush()
+            # Run "Satellite Cluster Aggregation"
+            if nrt_vectors:
+                 logger.info(f"Aggregating {len(nrt_vectors)} NRTs for satellite clustering...")
+                 self._aggregate_ntus(nrt_vectors, nrt_ids, nrt_meta)
+            else:
+                 logger.info("No NRTs found in batch. Skipping aggregation.")
+                 if sys.__stdout__:
+                    sys.__stdout__.write(json.dumps({
+                        "type": "batch_discovery_summary",
+                        "ntus": [],
+                        "isolated": 0
+                    }) + "\n")
+                    sys.__stdout__.flush()
 
         except Exception as e:
-            logger.error(f"Processing Error: {e}")
+            logger.error(f"Batch Processing Error: {e}")
             if sys.__stdout__:
                 sys.__stdout__.write(json.dumps({
                     "type": "error",
+                    "message": str(e),
+                    "traceback": traceback.format_exc()
+                }) + "\n")
+                sys.__stdout__.flush()
+            
+    def _aggregate_ntus(self, nrt_vectors, nrt_ids, nrt_meta):
+        """
+        @Bio-Taxon: Satellite Cluster Aggregation.
+        Groups NRTs by shared topology (Density/Neighbor-Overlap).
+        """
+        if not self.discovery:
+            logger.warning("Discovery Engine missing.")
+            return
+
+        try:
+            # 1. Coordinate Extraction
+            X = np.vstack(nrt_vectors).astype(np.float32)
+            n_samples = X.shape[0]
+            
+            # Constraint: Need minimal samples for HDBSCAN density (min_cluster_size=5)
+            if n_samples < 5:
+                logger.info("Insufficient NRTs for stable clustering. Returning as Isolated Taxa.")
+                self._emit_discovery_result([], nrt_meta)
+                return
+
+            # 2. Clustering (Approximating "80% Shared Neighbors" via Density)
+            # HDBSCAN parameters tuned for "Micro-Clusters"
+            # min_samples=3 allows for small but tight groups
+            labels = self.discovery.clusterer.fit_predict(X)
+            
+            # 3. Aggregation
+            unique_labels = set(labels)
+            ntus = []
+            isolated = []
+
+            for label in unique_labels:
+                if label == -1:
+                    # Noise / Isolated
+                    noise_indices = np.where(labels == -1)[0]
+                    for idx in noise_indices:
+                        isolated.append(nrt_meta[idx])
+                    continue
+
+                # Cluster Members
+                indices = np.where(labels == label)[0]
+                cluster_vectors = X[indices]
+                cluster_ids = [nrt_ids[i] for i in indices]
+                cluster_meta = [nrt_meta[i] for i in indices]
+                
+                # A. Centroid & Holotype
+                centroid = np.mean(cluster_vectors, axis=0)
+                
+                # Find closest to centroid (Euclidean)
+                distances = np.linalg.norm(cluster_vectors - centroid, axis=1)
+                holotype_idx = np.argmin(distances)
+                holotype_id = cluster_ids[holotype_idx]
+                holotype_vector = cluster_vectors[holotype_idx]
+                
+                # B. Variance (Mean distance from centroid)
+                variance = np.mean(distances)
+                
+                # C. Consensus Anchor
+                # "Group sequences that share Top Neighbors..."
+                # We use the classification from the initial scan (which is based on neighbors)
+                # to find the "Anchor"
+                anchors = [m.get('classification', 'Unknown') for m in cluster_meta]
+                common_anchor = Counter(anchors).most_common(1)[0][0]
+                
+                # Lineage Consensus
+                lineages = [m.get('lineage', '') for m in cluster_meta]
+                common_lineage = Counter(lineages).most_common(1)[0][0]
+
+                # D. ID Generation
+                # EXPEDIA-NTU-{Year}-{ClusterHash or Incremental}
+                # Using simple incremental based on current time/batch for demo
+                # Ideally check DB for existing NTUs
+                ntu_id = f"EXPEDIA-NTU-2026-{int(time.time())}-{label}"
+                
+                ntus.append({
+                    "ntu_id": ntu_id,
+                    "anchor_taxon": common_anchor,
+                    "lineage": common_lineage,
+                    "size": len(indices),
+                    "divergence": float(variance),
+                    "centroid_id": holotype_id,
+                    "centroid_vector": holotype_vector.tolist(), # Serialize
+                    "members": cluster_ids
+                })
+
+            # 4. Emit
+            self._emit_discovery_result(ntus, isolated)
+
+        except Exception as e:
+            logger.error(f"Aggregation Failed: {e}")
+            self._emit_discovery_result([], [])
+
+    def _emit_discovery_result(self, ntus, isolated):
+        """Helper to emit JSON safely."""
+        try:
+             # Basic serialization helper
+            def _make_json_serializable(obj):
+                if isinstance(obj, np.ndarray): return obj.tolist()
+                if isinstance(obj, np.generic): return obj.item()
+                if isinstance(obj, dict): return {k: _make_json_serializable(v) for k, v in obj.items()}
+                if isinstance(obj, list): return [_make_json_serializable(i) for i in obj]
+                return obj
+
+            payload = {
+                "type": "batch_discovery_summary",
+                "ntus": _make_json_serializable(ntus),
+                "isolated_count": len(isolated),
+                "isolated_taxa": _make_json_serializable(isolated) 
+            }
+
+            if sys.__stdout__:
+                sys.__stdout__.write(json.dumps(payload) + "\n")
+                sys.__stdout__.flush()
+                
+        except Exception as e:
+            logger.error(f"Emit Error: {e}")
+
+    def get_localized_topology(self, vector, k=500):
+        """
+        @Data-Ops: Micro-Topology Engine.
+        Fetches {k} neighbors, runs HDBSCAN on (Query + k), and calculates PCA.
+        """
+        if not self.db:
+            self.initialize()
+
+        if self.db is None:
+            logger.error("Database Engine failed to initialize. Cannot run topology.")
+            return
+            
+        logger.info(f"Running Localized Topology (k={k})...")
+        
+        try:
+            query_vector = np.array(vector, dtype=np.float32)
+            
+            # 1. Fetch Neighbors
+            # vector_search returns a DataFrame with 'vector', 'id', 'classification', 'lineage', 'dist'
+            df_neighbors = self.db.vector_search(query_vector, top_k=k)
+            
+            if df_neighbors.empty:
+                logger.warning("No neighbors found.")
+                if sys.__stdout__:
+                    sys.__stdout__.write(json.dumps({"type": "manifold_data", "data": [], "status": "empty"}) + "\n")
+                    sys.__stdout__.flush()
+                return
+
+            # 2. Prepare Data Matrix (501 points)
+            # Row 0 is ALWAYS the Query
+            neighbor_vectors = np.stack(df_neighbors['vector'].tolist())
+            all_vectors = np.vstack([query_vector, neighbor_vectors])
+            
+            # Metadata sync
+            neighbor_meta = df_neighbors[['id', 'classification', 'lineage']].to_dict(orient='records')
+            
+            # 3. Localized Discovery (HDBSCAN on 501 points)
+            # Using existing discovery engine instance
+            if self.discovery and self.discovery.clusterer:
+                 # Standardize IDs for clustering context
+                 all_ids = ["QUERY"] + [m['id'] for m in neighbor_meta]
+                 
+                 # Fit HDBSCAN
+                 # We re-run fit_predict on this small subset
+                 labels = self.discovery.clusterer.fit_predict(all_vectors)
+                 
+                 # Analyze Cluster containing Query (Index 0)
+                 query_label = labels[0]
+                 
+                 consensus_summary = "Outlier"
+                 hull_points = []
+                 
+                 if query_label != -1:
+                     # Filter points in same cluster
+                     cluster_indices = np.where(labels == query_label)[0]
+                     # Get their metadata (offset by -1 for neighbors)
+                     cluster_meta = []
+                     for idx in cluster_indices:
+                         if idx == 0: continue
+                         cluster_meta.append(neighbor_meta[idx-1])
+                         
+                     # Calculate Consensus
+                     if cluster_meta:
+                         taxa = [m.get('classification', 'Unknown') for m in cluster_meta]
+                         common = Counter(taxa).most_common(1)
+                         if common:
+                             consensus_name, count = common[0]
+                             pct = (count / len(cluster_meta)) * 100
+                             consensus_summary = f"{consensus_name} ({pct:.1f}%)"
+            else:
+                 query_label = -1
+                 consensus_summary = "Discovery Engine Offline"
+
+            # 4. Localized PCA (3D)
+            pca = PCA(n_components=3)
+            principal_components = pca.fit_transform(all_vectors)
+            
+            # Split
+            query_pc = principal_components[0].tolist()
+            neighbors_pc = principal_components[1:].tolist()
+            
+            # 5. Serialize
+            response = {
+                "type": "manifold_data",
+                "status": "success",
+                "query": {
+                    "coords": query_pc,
+                    "label": query_label if isinstance(query_label, int) else int(query_label)
+                },
+                "neighbors": [],
+                "consensus": consensus_summary
+            }
+            
+            for i, pc in enumerate(neighbors_pc):
+                meta = neighbor_meta[i]
+                response["neighbors"].append({
+                    "coords": pc,
+                    "id": meta.get('id'),
+                    "classification": meta.get('classification'),
+                    "lineage": meta.get('lineage'),
+                    "label": int(labels[i+1]) if 'labels' in locals() else -1
+                })
+            
+            if sys.__stdout__:
+                sys.__stdout__.write(json.dumps(response) + "\n")
+                sys.__stdout__.flush()
+
+        except Exception as e:
+            logger.error(f"Topology Error: {e}")
+            if sys.__stdout__:
+                sys.__stdout__.write(json.dumps({
+                    "type": "error", 
                     "message": str(e),
                     "traceback": traceback.format_exc()
                 }) + "\n")
@@ -297,48 +544,62 @@ class ScienceKernel:
             return
 
         logger.info(f"Running HDBSCAN on {len(nrt_vectors)} NRTs...")
+        
+        def _make_json_serializable(obj):
+            """Recursively converts numpy types to python natives."""
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, np.generic):
+                return obj.item()
+            if isinstance(obj, dict):
+                return {k: _make_json_serializable(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_make_json_serializable(i) for i in obj]
+            return obj
+
         try:
             # Stack vectors
+            if len(nrt_vectors) == 0:
+                 # Should fail fast but handled just in case
+                 if sys.__stdout__:
+                    sys.__stdout__.write(json.dumps({
+                        "type": "discovery_results",
+                        "data": [],
+                        "status": "no_clusters_found"
+                    }) + "\n")
+                    sys.__stdout__.flush()
+                 return
+            
             vectors_array = np.vstack(nrt_vectors)
             
             # Cluster (pass metadata if available)
+            # cluster_nrt_batch returns a DataFrame
             clusters_df = self.discovery.cluster_nrt_batch(vectors_array, nrt_ids, nrt_meta) # type: ignore
             
-            clean_data = [] # Declare outside invalid block
+            clean_data = [] 
             
             if not clusters_df.empty:
                 # Convert to dict for JSON
-                clusters_data = clusters_df.to_dict(orient="records")
+                raw_data = clusters_df.to_dict(orient="records")
                 
                 # ---------------------------------------------------------------------
-                # IPC HYGIENE: Prepare Data for JSON Serialization
+                # IPC HYGIENE: Robust Serialization
                 # ---------------------------------------------------------------------
-                for record in clusters_data:
-                    # Convert NumPy arrays to lists
-                    if 'centroid' in record:
-                         if isinstance(record['centroid'], np.ndarray):
-                             record['centroid'] = record['centroid'].tolist()
-                    
-                    # Convert NumPy scalars (int64/float32) to Python natives
-                    if 'size' in record:
-                        record['size'] = int(record['size'])
-                        
-                    # Ensure IDs are strings
-                    if 'ntu_id' in record:
-                        record['ntu_id'] = str(record['ntu_id'])
-                        
-                    # Convert lists in members if needed (usually fine)
-                    
-                    clean_data.append(record)
+                # Use recursive converter to ensure ALL numpy types are gone
+                clean_data = _make_json_serializable(raw_data)
+
+            # Check if we actually found anything
+            status_msg = "success" if clean_data else "no_clusters_found"
 
             # ALWAYS Emit Result (Even if empty, to unblock UI)
-            json_str = json.dumps({
+            json_payload = {
                 "type": "discovery_results",
-                "data": clean_data
-            })
+                "data": clean_data,
+                "status": status_msg
+            }
             
             if sys.__stdout__:
-                sys.__stdout__.write(json_str + "\n")
+                sys.__stdout__.write(json.dumps(json_payload) + "\n")
                 sys.__stdout__.flush()
                 
         except Exception as e:
@@ -348,7 +609,9 @@ class ScienceKernel:
             if sys.__stdout__:
                 sys.__stdout__.write(json.dumps({
                     "type": "discovery_results",
-                    "data": []
+                    "data": [],
+                    "status": "error", 
+                    "error": str(e)
                 }) + "\n")
                 sys.__stdout__.flush()
 
