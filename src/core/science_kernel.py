@@ -258,7 +258,7 @@ class ScienceKernel:
             n_samples = X.shape[0]
             
             # Constraint: Need minimal samples for HDBSCAN density (min_cluster_size=5)
-            if n_samples < 5:
+            if n_samples < 2:
                 logger.info("Insufficient NRTs for stable clustering. Returning as Isolated Taxa.")
                 self._emit_discovery_result([], nrt_meta)
                 return
@@ -539,7 +539,8 @@ class ScienceKernel:
                 "classification": analysis.get("classification", "Unknown"),
                 "confidence": float(analysis.get("confidence", 0.0)),
                 "lineage": analysis.get("lineage", "Unknown Lineage"),
-                "workflow": analysis.get("workflow", "Tier 0")
+                "workflow": analysis.get("workflow", "Tier 0"),
+                "vector": embedding.tolist() # Enable localized topology query
             }
             
             # Emit result

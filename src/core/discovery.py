@@ -14,8 +14,8 @@ class DiscoveryEngine:
     """
 
     def __init__(self):
-        self.min_cluster_size = 3
-        self.min_samples = 2
+        self.min_cluster_size = 2
+        self.min_samples = 1
         self.clusterer = hdbscan.HDBSCAN(
             min_cluster_size=self.min_cluster_size,
             min_samples=self.min_samples,

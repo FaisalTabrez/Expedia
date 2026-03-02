@@ -304,28 +304,34 @@ class DiscoveryWorker(QObject):
 
     def stop_kernel(self):
         """Terminates the subprocess safely."""
-        if self._process:
+        if hasattr(self, '_process') and self._process is not None:
+            logger.info("Terminating Science Kernel...")
+            
+            # Try graceful shutdown
             if self._process.poll() is None:
-                logger.info("Terminating Science Kernel...")
-                # Try graceful shutdown
                 try:
                     if self._process.stdin:
                         self._process.stdin.write(json.dumps({"command": "shutdown"}) + "\n")
                         self._process.stdin.flush()
+                        
+                        # Close pipes explicitly
+                        self._process.stdin.close()
+                        if self._process.stdout: self._process.stdout.close()
+                        if self._process.stderr: self._process.stderr.close()
+                        
                         try:
                             self._process.wait(timeout=2)
                         except subprocess.TimeoutExpired:
                             pass
-                except (IOError, BrokenPipeError, OSError):
-                    # Process might already be dead
+                except (IOError, BrokenPipeError, OSError, ValueError):
                     pass
             
             # Force kill if still running
-            if self._process.poll() is None:
-                try:
+            try:
+                if self._process.poll() is None:
                     self._process.kill()
                     self._process.wait()
-                except (OSError, ProcessLookupError):
+            except (OSError, ProcessLookupError, ValueError):
                     pass
             
             self._process = None

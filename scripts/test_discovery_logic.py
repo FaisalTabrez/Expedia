@@ -107,7 +107,62 @@ def test_aggregation_logic():
             
     print("FAIL: No valid output received.")
 
+def test_vector_payload():
+    print("\n[TEST] Vector Payload in Result")
+    kernel = ScienceKernel()
+    
+    # Mock Embedder
+    class MockEmbedder:
+        def generate_embedding(self, seq):
+            return np.random.rand(10).astype(np.float32)
+    kernel.embedder = MockEmbedder()
+    
+    # Mock DB
+    kernel.db = None # Skip DB search
+    
+    # Mock Taxonomy
+    class MockTaxonomy:
+        def analyze_sample(self, neighbors, seq):
+            return {"status": "Novel", "classification": "Unknown", "confidence": 0.5}
+    kernel.taxonomy = MockTaxonomy()
+    
+    # Capture output
+    from io import StringIO
+    captured_output = StringIO()
+    original_stdout = sys.__stdout__
+    sys.__stdout__ = captured_output
+    
+    try:
+        kernel._process_batch(["ATCG"], ["test_seq"], [], [], [])
+    except Exception as e:
+        sys.__stdout__ = original_stdout
+        print(f"FAIL: Batch Processing Error: {e}")
+        return
+
+    sys.__stdout__ = original_stdout
+    output = captured_output.getvalue()
+    
+    for line in output.strip().split('\n'):
+        try:
+            msg = json.loads(line)
+            if msg.get("type") == "result":
+                data = msg.get("data", {})
+                if "vector" in data:
+                    vec = data["vector"]
+                    if isinstance(vec, list) and len(vec) == 10:
+                         print("PASS: Vector Payload Valid.")
+                    else:
+                         print(f"FAIL: Vector format invalid. Got {type(vec)}")
+                else:
+                    print("FAIL: 'vector' key missing in result.")
+                return
+        except json.JSONDecodeError:
+            pass
+            
+    print("FAIL: No valid result output.")
+
 if __name__ == "__main__":
     print("Running Tests on New Implementations...")
     test_taxonomy_consensus()
     test_aggregation_logic()
+    test_vector_payload()

@@ -140,7 +140,7 @@ MODEL_INTERMEDIATE_SIZE = 2048
 
 # Similarity Thresholds
 THRESHOLD_CONFIRMED = 0.95  # >95% for species confirmation
-THRESHOLD_NOVEL = 0.85      # <85% for Novel Taxonomic Units (NTUs)
+THRESHOLD_NOVEL = 0.70      # <70% for Novel Taxonomic Units (NTUs)
 
 # Inference Logic
 CONSENSUS_K_NEIGHBORS = 50   # Number of neighbors for majority vote
