@@ -154,7 +154,8 @@ class ScienceKernel:
                 elif cmd_type == "get_localized_topology":
                     vector = command.get("vector")
                     k = command.get("k", 500)
-                    self.get_localized_topology(vector, k)
+                    record_id = command.get("id", "Unknown")
+                    self.get_localized_topology(vector, record_id, k)
                 elif cmd_type == "shutdown":
                     logger.info("Shutdown command received.")
                     break
@@ -358,7 +359,7 @@ class ScienceKernel:
         except Exception as e:
             logger.error(f"Emit Error: {e}")
 
-    def get_localized_topology(self, vector, k=500):
+    def get_localized_topology(self, vector, record_id="Unknown", k=500):
         """
         @Data-Ops: Micro-Topology Engine.
         Fetches {k} neighbors, runs HDBSCAN on (Query + k), and calculates PCA.
@@ -370,7 +371,7 @@ class ScienceKernel:
             logger.error("Database Engine failed to initialize. Cannot run topology.")
             return
             
-        logger.info(f"Running Localized Topology (k={k})...")
+        logger.info(f"[KERNEL] Computing localized topology for ID: {record_id} with {k} neighbors")
         
         try:
             query_vector = np.array(vector, dtype=np.float32)

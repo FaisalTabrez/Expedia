@@ -283,6 +283,7 @@ class DiscoveryWorker(QObject):
                 line = topo_process.stdout.readline()
                 if not line: break
                 
+                logger.info(f"[WORKER] Received manifold data packet: {len(line)} bytes.")
                 try:
                     msg = json.loads(line)
                     if msg.get("type") == "localized_manifold":
@@ -315,7 +316,7 @@ class DiscoveryWorker(QObject):
                             self._process.wait(timeout=2)
                         except subprocess.TimeoutExpired:
                             pass
-                except (IOError, BrokenPipeError):
+                except (IOError, BrokenPipeError, OSError):
                     # Process might already be dead
                     pass
             
@@ -323,10 +324,12 @@ class DiscoveryWorker(QObject):
             if self._process.poll() is None:
                 try:
                     self._process.kill()
-                except (BrokenPipeError, OSError):
+                    self._process.wait()
+                except (OSError, ProcessLookupError):
                     pass
             
             self._process = None
+            logger.info("[WORKER] Science Kernel process cleaned up safely.")
 
     def stop(self):
         """Request worker to stop."""

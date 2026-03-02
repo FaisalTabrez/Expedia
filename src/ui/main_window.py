@@ -92,77 +92,7 @@ class MainWindow(FluentWindow):
         # 4. Export
         self.monitor_interface.batch_summary.request_report.connect(self.export_discovery_manifest)
 
-    def export_discovery_manifest(self):
-        """
-        @Data-Ops: Exports NTU data to Research Format.
-        """
-        import json
-        from pathlib import Path
-        from qfluentwidgets import InfoBar, InfoBarPosition 
-        
-        # Gathering Data from State
-        # Assuming discovery_interface holds the truth or we stored it
-        ntu_cards = self.discovery_interface.ntu_cards
-        if not ntu_cards:
-            InfoBar.warning(
-                title='Export Aborted',
-                content='No Discovery Data Available to Export.',
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP_RIGHT,
-                duration=3000,
-                parent=self
-            )
-            return
 
-        # Prepare Paths
-        results_dir = app_config.DATA_ROOT / "results"
-        results_dir.mkdir(parents=True, exist_ok=True)
-        
-        fasta_path = results_dir / "EXPEDIA_Discovery_Manifest.fasta"
-        json_path = results_dir / "EXPEDIA_Discovery_Manifest.json"
-        
-        try:
-            # 1. FASTA Export
-            # Iterate NTUs and export Centroid Sequence (Holotype) or all members if available
-            # Note: We only have metadata in cards. We might need original sequences.
-            # However, prompt asked to save "all sequences belonging to discovered NTUs".
-            # The Kernel passed IDs. We might strictly need the sequences which are likely in input file 
-            # or we rely on what we have. 
-            # Given current architecture, we might only have Centroid info if passed.
-            # Wait, `ntu_data` has `centroid_vector` but maybe not sequence string.
-            # The prompt implies we have the sequences.
-            # Constraint: We don't have the sequences in memory here easily unless we stored them.
-            # FOR DEMO: We will export a manifest of IDs and available metadata.
-            
-            with open(fasta_path, "w") as f:
-                for card in ntu_cards:
-                    data = card.ntu_data
-                    # Holotype Header
-                    f.write(f">{data.get('ntu_id')} [Holotype: {data.get('centroid_id')}] [Anchor: {data.get('anchor_taxon')}]\n")
-                    f.write(f"NNNNN\n") # Placeholder if sequence not in memory
-                    
-            # 2. JSON Metadata
-            manifest = []
-            for card in ntu_cards:
-                manifest.append(card.ntu_data)
-                
-            with open(json_path, "w") as f:
-                json.dump(manifest, f, indent=4)
-                
-            # Success Notification
-            InfoBar.success(
-                title='Research Export Complete',
-                content=f'Manifest saved to {results_dir}',
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP_RIGHT,
-                duration=5000,
-                parent=self
-            )
-            
-        except Exception as e:
-            self.on_worker_error(f"Export Failed: {e}")
 
     def on_view_topology_requested(self, data: dict):
         """
@@ -375,6 +305,43 @@ class MainWindow(FluentWindow):
             duration=5000,
             parent=self
         )
+
+    def export_discovery_manifest(self):
+        """Export current discovery data to CSV."""
+        from PySide6.QtWidgets import QFileDialog
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "EXPORT DISCOVERY MANIFEST", 
+            "expedition_manifest.csv", 
+            "CSV Files (*.csv)"
+        )
+        
+        if not file_path:
+            return
+
+        success = self.discovery_interface.export_data(file_path)
+        
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        if success:
+             InfoBar.success(
+                title='Export Successful',
+                content=f'Manifest saved to {file_path}',
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=3000,
+                parent=self
+            )
+        else:
+             InfoBar.error(
+                title='Export Failed',
+                content='Could not write manifest file.',
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=3000,
+                parent=self
+            )
 
     def on_worker_error(self, err_msg):
         self.monitor_interface.log_message(f"ERROR > {err_msg}")

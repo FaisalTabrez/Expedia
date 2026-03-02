@@ -249,9 +249,16 @@ class DiscoveryView(QWidget):
             card.view_manifold_signal.connect(self.request_cluster_view.emit)
             
             # Disable Manifold Jump if no vector available
-            if ntu_data.get("centroid") is None:
-                card.btn_view.setText("VECTOR UNAVAILABLE")
-                card.btn_view.setEnabled(False)
+            # Check for centroid_vector or centroid
+            has_vector = ntu_data.get("centroid_vector") is not None or ntu_data.get("centroid") is not None
+            
+            if not has_vector:
+                if hasattr(card, 'btn_explore'):
+                     card.btn_explore.setText("VECTOR UNAVAILABLE")
+                     card.btn_explore.setEnabled(False)
+                elif hasattr(card, 'btn_view'):
+                     card.btn_view.setText("VECTOR UNAVAILABLE")
+                     card.btn_view.setEnabled(False)
 
             row = idx // cols
             col = idx % cols
@@ -261,3 +268,31 @@ class DiscoveryView(QWidget):
     def update_session_stats(self, processed_count, ntu_count):
         rate = (ntu_count / processed_count * 100) if processed_count > 0 else 0.0
         self.summary_panel.update_stats(processed_count, ntu_count, rate)
+
+    def export_data(self, file_path: str):
+        """Exports the current discovery set to CSV."""
+        if not self.ntu_cards:
+            return False
+            
+        import csv
+        try:
+            with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                # Header
+                writer.writerow(["NTU_ID", "ANCHOR_TAXON", "LINEAGE", "SIZE", "DIVERGENCE", "CENTROID_ID"])
+                
+                for card in self.ntu_cards:
+                    data = card.ntu_data
+                    writer.writerow([
+                        data.get("ntu_id", ""),
+                        data.get("anchor_taxon", ""),
+                        data.get("lineage", ""),
+                        data.get("size", 0),
+                        data.get("divergence", 0.0),
+                        # Handles both real clusters and pseudo-clusters
+                        data.get("centroid_id", data.get("ntu_id", ""))
+                    ])
+            return True
+        except Exception as e:
+            logger.error(f"Failed to export: {e}")
+            return False

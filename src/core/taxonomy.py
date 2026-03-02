@@ -149,27 +149,30 @@ class TaxonomyEngine:
             'metagenome', 'bacterium', 'eukaryote'
         ]
         
+        # Weighted Vote
+        # Weight top result double due to vector similarity
         candidates = []
-        for _, row in df.iterrows():
-            val = str(row.get(rank, '')).strip()
-            if not val:
-                continue
-                
-            # Check against blacklist
-            is_valid = True
-            val_lower = val.lower()
-            for bad_term in BLACKLIST:
-                if bad_term in val_lower:
-                    is_valid = False
-                    break
+        for i, (_, row) in enumerate(df.iterrows()):
+             val = str(row.get(rank, '')).strip()
+             if not val: continue
+             
+             # Blacklist check
+             is_valid = True
+             val_lower = val.lower()
+             for bad_term in BLACKLIST:
+                 if bad_term in val_lower:
+                     is_valid = False
+                     break
             
-            if is_valid:
-                candidates.append(val)
-                
+             if is_valid:
+                 candidates.append(val)
+                 if i == 0: # Double weight for #1 neighbor
+                     candidates.append(val)
+
         if not candidates:
             return {"taxon": "Unclassified", "confidence": 0.0}
             
-        # Weighted Vote (Top matches count more? For now just raw counts)
+        # Weighted Vote
         counts = Counter(candidates)
         most_common = counts.most_common(1)[0]
         confidence = most_common[1] / len(candidates)

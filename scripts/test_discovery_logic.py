@@ -1,0 +1,113 @@
+
+import sys
+import os
+import json
+import numpy as np
+import logging
+
+# Add project root to sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Mocking modules that might not be fully available or too heavy for a unit test
+# But we try to import the actual classes
+try:
+    from src.core.science_kernel import ScienceKernel
+    from src.core.taxonomy import TaxonomyEngine
+except ImportError as e:
+    print(f"Import Failed: {e}")
+    sys.exit(1)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("TestDiscovery")
+
+def test_taxonomy_consensus():
+    print("\n[TEST] Taxonomy Consensus Logic")
+    engine = TaxonomyEngine()
+    
+    # Mock DataFrame
+    import pandas as pd
+    data = {
+        'genus': ['Vibrio', 'Vibrio', 'Vibrio', 'Pseudomonas', 'Vibrio'],
+        'confidence': [0.9, 0.8, 0.9, 0.7, 0.6]
+    }
+    df = pd.DataFrame(data)
+    
+    # Test _get_consensus_at_rank
+    result = engine._get_consensus_at_rank(df, 'genus')
+    print(f"Consensus Result: {result}")
+    
+    if result['taxon'] == 'Vibrio' and result['confidence'] > 0.6:
+        print("PASS: Taxonomy Consensus Logic Verified.")
+    else:
+        print("FAIL: Taxonomy Consensus Logic Incorrect.")
+
+def test_aggregation_logic():
+    print("\n[TEST] Satellite Cluster Aggregation")
+    
+    # Mock ScienceKernel to avoid full initialization
+    kernel = ScienceKernel()
+    
+    # Mock DiscoveryEngine (HDBSCAN)
+    class MockDiscovery:
+        class Clusterer:
+            def fit_predict(self, X):
+                # Returns 2 clusters + noise
+                # First 5 points -> Cluster 0
+                # Next 5 points -> Cluster 1
+                # Last 2 points -> Noise (-1)
+                labels = np.array([0]*5 + [1]*5 + [-1]*2)
+                return labels
+        
+        def __init__(self):
+            self.clusterer = self.Clusterer()
+            
+    kernel.discovery = MockDiscovery()
+    
+    # Create Dummy NRT Vectors
+    # 12 vectors of dimension 10
+    nrt_vectors = [np.random.rand(10).astype(np.float32) for _ in range(12)]
+    nrt_ids = [f"seq_{i}" for i in range(12)]
+    nrt_meta = [
+        {"id": f"seq_{i}", "classification": "Novel", "lineage": "Bacteria"} 
+        for i in range(12)
+    ]
+    
+    # Capture output
+    from io import StringIO
+    captured_output = StringIO()
+    original_stdout = sys.__stdout__
+    sys.__stdout__ = captured_output
+    
+    try:
+        kernel._aggregate_ntus(nrt_vectors, nrt_ids, nrt_meta)
+    except Exception as e:
+        sys.__stdout__ = original_stdout
+        print(f"FAIL: Aggregation crashed: {e}")
+        return
+
+    sys.__stdout__ = original_stdout
+    output = captured_output.getvalue()
+    
+    # Parse Output
+    for line in output.strip().split('\n'):
+        try:
+            msg = json.loads(line)
+            if msg.get("type") == "batch_discovery_summary":
+                ntus = msg.get("ntus", [])
+                isolated = msg.get("isolated_count", 0)
+                print(f"Result: {len(ntus)} NTUs, {isolated} Isolated.")
+                
+                if len(ntus) == 2 and isolated == 2:
+                    print("PASS: Aggregation Logic Verified.")
+                else:
+                    print(f"FAIL: Unexpected counts (Expected 2 NTUs, 2 Isolated). Got {len(ntus)}, {isolated}")
+                return
+        except json.JSONDecodeError:
+            pass
+            
+    print("FAIL: No valid output received.")
+
+if __name__ == "__main__":
+    print("Running Tests on New Implementations...")
+    test_taxonomy_consensus()
+    test_aggregation_logic()
