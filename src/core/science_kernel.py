@@ -441,14 +441,14 @@ class ScienceKernel:
             
             # 5. Serialize
             response = {
-                "type": "manifold_data",
+                "type": "localized_manifold",
                 "status": "success",
+                "consensus": consensus_summary,
                 "query": {
                     "coords": query_pc,
-                    "label": query_label if isinstance(query_label, int) else int(query_label)
+                    "label": int(query_label) if 'labels' in locals() else -1
                 },
-                "neighbors": [],
-                "consensus": consensus_summary
+                "neighbors": []
             }
             
             for i, pc in enumerate(neighbors_pc):
@@ -461,8 +461,19 @@ class ScienceKernel:
                     "label": int(labels[i+1]) if 'labels' in locals() else -1
                 })
             
+            # Safe Serialization Helper
+            def _make_json_serializable(obj):
+                if isinstance(obj, np.ndarray): return obj.tolist()
+                if isinstance(obj, np.generic): return obj.item()
+                if isinstance(obj, dict): return {k: _make_json_serializable(v) for k, v in obj.items()}
+                if isinstance(obj, list): return [_make_json_serializable(i) for i in obj]
+                return obj
+
+            clean_response = _make_json_serializable(response)
+
+            logger.info("KERNEL: Sending 500-neighbor localized manifold.")
             if sys.__stdout__:
-                sys.__stdout__.write(json.dumps(response) + "\n")
+                sys.__stdout__.write(json.dumps(clean_response) + "\n")
                 sys.__stdout__.flush()
 
         except Exception as e:

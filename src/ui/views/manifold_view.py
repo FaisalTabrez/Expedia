@@ -178,8 +178,29 @@ class ManifoldView(QWidget):
         logger.info("Rendering Manifold from Kernel Data")
         self.has_content = True
         
+        # Immediate UI Clean
+        if WEB_ENGINE_AVAILABLE:
+            # Clear loading message to avoid flicker or stale state
+            pass # setHtml will overwrite
+            
         try:
             # 1. Parse Data
+            status = data.get("status")
+            if status == "empty" or status == "error":
+                logger.warning(f"Manifold Generation Failed: {data.get('message', 'Unknown')}")
+                from qfluentwidgets import InfoBar, InfoBarPosition
+                InfoBar.warning(
+                    title='Micro-Topology Error',
+                    content='FAILED TO RECONSTRUCT GENOMIC TOPOLOGY',
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP_RIGHT,
+                    duration=5000,
+                    parent=self
+                )
+                self.show_empty_state()
+                return
+
             query_point = data.get("query")
             neighbors = data.get("neighbors", [])
             consensus = data.get("consensus", "Analyzing...")
@@ -192,6 +213,7 @@ class ManifoldView(QWidget):
             # 2. Create Plotly Figure
             fig = go.Figure()
 
+            # ... (Existing Trace Logic) ...
             # A. Neighbors
             if neighbors:
                 x_vals = [n['coords'][0] for n in neighbors if n.get('coords')]
@@ -213,15 +235,11 @@ class ManifoldView(QWidget):
                     name='Neighborhood'
                 ))
 
-            # B. Query Point (Large Neon Star)
+            # B. Query Point
             q_coords = query_point.get("coords")
-            if not q_coords:
-                 logger.error("Query point has no coordinates.")
-                 self.show_empty_state()
-                 return # Exit early
+            if not q_coords: return
 
             q_label = query_point.get("label", -1)
-            
             query_color = '#FF007A' # Neon Pink
             symbol = 'diamond'
             
@@ -239,44 +257,35 @@ class ManifoldView(QWidget):
                 name='Active Sequence'
             ))
             
-            # C. Dashed Line to Nearest Neighbor
+            # C. Dashed Line
             if neighbors:
-                # Neighbors are ordered by distance (implied by vector search return order)
                 nn = neighbors[0] 
                 nn_coords = nn.get('coords')
-                
                 if nn_coords:
                     fig.add_trace(go.Scatter3d(
                         x=[q_coords[0], nn_coords[0]],
                         y=[q_coords[1], nn_coords[1]],
                         z=[q_coords[2], nn_coords[2]],
                         mode='lines',
-                        line=dict(
-                            color='#AAAAAA',
-                            width=3,
-                            dash='dash'
-                        ),
+                        line=dict(color='#AAAAAA', width=3, dash='dash'),
                         name='Evolutionary Distance'
                     ))
 
-            # D. Cluster Hull (if specific cluster found)
+            # D. Cluster Hull
             if q_label != -1:
                 cluster_points = [n['coords'] for n in neighbors if n.get('label') == q_label and n.get('coords')]
-                if len(cluster_points) > 4: # Need min points for hull
+                if len(cluster_points) > 4:
                      pts = np.array(cluster_points)
-                     # Add query to hull
                      pts = np.vstack([pts, q_coords])
-                     
                      try:
                          fig.add_trace(go.Mesh3d(
                             x=pts[:,0], y=pts[:,1], z=pts[:,2],
                             opacity=0.1,
                             color='#FF007A',
-                            alphahull=0, # Convex Hull
+                            alphahull=0,
                             name='Convergent Cluster'
                          ))
-                     except Exception as hull_err:
-                         logger.warning(f"Hull calculation failed (collinear?): {hull_err}")
+                     except: pass
             
             # E. Consensus Annotation
             fig.add_annotation(
@@ -292,11 +301,11 @@ class ManifoldView(QWidget):
                 borderpad=10
             )
 
-            # Styling
+            # Styling & Injection
             self.update_plot(fig)
 
         except Exception as e:
-            logger.error(f"Manifold Generation Error: {e}")
+            logger.error(f"Manifold Render Error: {e}")
             self.show_empty_state()
     
     def update_plot(self, fig: go.Figure):

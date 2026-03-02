@@ -217,88 +217,89 @@ class DiscoveryWorker(QObject):
             self.stop_kernel()
             self._is_running = False
 
-    def request_localized_topology(self, vector: list):
+    def request_localized_topology(self, payload: dict):
         """
         Runs the 'get_localized_topology' command cleanly.
-        Does NOT block the main thread.
-        Reuse existing process or start new one.
+        Spawns a transient Kernel process to avoid blocking the main ingestion pipeline.
         """
-        self._is_running = True
+        if not payload: return
+
+        vector = payload.get("vector")
+        record_id = payload.get("id", "Unknown")
         
-        # 1. Start Subprocess (Isolated Python Environment)
+        # 1. Start Transient Subprocess
         python_exe = sys.executable 
         kernel_path = Path(__file__).parent / "science_kernel.py"
         
+        # Env setup (same as main worker)
+        env = os.environ.copy()
+        env["EXPEDIA_ROOT_PATH"] = str(app_config.DATA_ROOT)
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        if "PYTHONPATH" in env:
+            env["PYTHONPATH"] = project_root + os.pathsep + env["PYTHONPATH"]
+        else:
+            env["PYTHONPATH"] = project_root
+
+        logger.info(f"Worker: Launching Topology Kernel for {record_id}...")
+        
         try:
-            self._process = subprocess.Popen(
+            # We use a separate process variable to not clobber the main self._process if running
+            topo_process = subprocess.Popen(
                 [python_exe, str(kernel_path)],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=sys.stderr, # Forward stderr to console for debugging
+                env=env,
                 text=True,
                 bufsize=1,
-                encoding='utf-8' # Force UTF-8 for JSON
+                encoding='utf-8'
             )
             
-            # Assert pipes for type safety
-            if not self._process.stdout or not self._process.stdin:
-                raise RuntimeError("Failed to open pipes to Science Kernel")
+            if not topo_process.stdout or not topo_process.stdin:
+                logger.error("Failed to open pipes for topology kernel.")
+                return
 
-            # 3. Handshake & Command
-            # Read stdout until {"type": "status", "status": "ready"}
+            # Handshake
             while True:
-                ready_line = self._process.stdout.readline()
-                if not ready_line:
-                    raise RuntimeError("Science Kernel failed to start (EOF).")
-                
+                line = topo_process.stdout.readline()
+                if not line: break
                 try:
-                    msg = json.loads(ready_line)
-                    if msg.get("type") == "status" and msg.get("status") == "ready":
-                         break
-                except json.JSONDecodeError:
-                     pass
+                    msg = json.loads(line)
+                    if msg.get("status") == "ready": break
+                except: pass
 
             # Send Command
-            command = json.dumps({
+            cmd = json.dumps({
                 "command": "get_localized_topology",
                 "vector": vector,
+                "id": record_id,
                 "k": 500
             })
-            self._process.stdin.write(command + "\n")
-            self._process.stdin.flush()
+            topo_process.stdin.write(cmd + "\n")
+            topo_process.stdin.flush()
             
-            # 4. Event Loop (Reading Output)
-            while self._is_running:
-                # Blocking read (line by line)
-                line = self._process.stdout.readline()
+            # Read Response
+            while True:
+                line = topo_process.stdout.readline()
+                if not line: break
                 
-                if not line:
-                    break
-
                 try:
-                    message = json.loads(line)
-                    msg_type = message.get("type")
-                    
-                    if msg_type == "manifold_data":
-                        # Manifold Output
-                        logger.info("Localized Manifold Calculated.")
-                        self.manifold_ready.emit(message)
+                    msg = json.loads(line)
+                    if msg.get("type") == "localized_manifold":
+                        # Success
+                        self.manifold_ready.emit(msg)
                         break
-
-                    elif msg_type == "error":
-                        err_msg = message.get("message", "Unknown Kernel Error")
-                        self.error.emit(f"Science Kernel: {err_msg}")
+                    elif msg.get("type") == "error":
+                        self.error.emit(msg.get("message"))
                         break
-                        
-                except json.JSONDecodeError:
-                    pass
+                except: pass
             
+            # Cleanup
+            topo_process.terminate()
+
         except Exception as e:
-            logger.error(f"Worker Orchestration Error: {e}")
+            logger.error(f"Topology Request Failed: {e}")
             self.error.emit(str(e))
-        finally:
-            self.stop_kernel()
-            self._is_running = False
 
     def stop_kernel(self):
         """Terminates the subprocess safely."""

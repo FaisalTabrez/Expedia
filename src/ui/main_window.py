@@ -27,7 +27,8 @@ class MainWindow(FluentWindow):
     Manages navigation, worker threads, and global state.
     """
     request_inference = Signal(str)
-    request_localized_manifold = Signal(list)
+    # request_localized_manifold = Signal(list) # Changed to dict for ID context
+    request_localized_manifold = Signal(dict)
 
     def __init__(self):
         super().__init__()
@@ -197,9 +198,15 @@ class MainWindow(FluentWindow):
         if vector is not None:
              # self.manifold_interface.generate_neighborhood_view(seq_id, vector)
              # Send Request to Worker
+             print(f'UI: Requesting Localized Topology for {seq_id}')
              if not self.worker_thread.isRunning():
                  self.worker_thread.start()
-             self.request_localized_manifold.emit(vector)
+             
+             payload = {
+                 "id": seq_id,
+                 "vector": vector
+             }
+             self.request_localized_manifold.emit(payload)
              
              self.manifold_interface.show_loading()
 

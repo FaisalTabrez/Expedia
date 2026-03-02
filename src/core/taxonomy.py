@@ -15,10 +15,19 @@ class TaxonomyEngine:
     """
 
     def __init__(self):
-        # Placeholder for WoRMS reference dataframe. 
-        # In production, load this from a CSV or DB.
-        self.worms_ref_data = [] 
-        logger.info("Taxonomy Engine Initialized.")
+        # Load WoRMS Reference Database
+        self.worms_ref_data = set()
+        if app_config.WORMS_CSV.exists():
+            try:
+                df = pd.read_csv(app_config.WORMS_CSV)
+                # Normalize and store valid names
+                if 'ScientificName' in df.columns:
+                    self.worms_ref_data = set(df['ScientificName'].str.lower().str.strip().tolist())
+                logger.info(f"WoRMS Oracle Loaded ({len(self.worms_ref_data)} records).")
+            except Exception as e:
+                logger.warning(f"Failed to load WoRMS CSV: {e}")
+        else:
+            logger.warning("WoRMS Reference CSV not found.")
 
     def analyze_sample(self, neighbors_df: pd.DataFrame, sequence_str: str) -> dict:
         """
@@ -33,8 +42,50 @@ class TaxonomyEngine:
                 "workflow": "Tier 0"
             }
 
-        # Check Best Match for Novelty
-        best_dist = neighbors_df.iloc[0].get('_distance', 1.0)
+        # 0. Perfect Match Bypass (Identity Matcher)
+        top_hit = neighbors_df.iloc[0]
+        best_dist = float(top_hit.get('_distance', 1.0)) # Ensure float
+        
+        # String Normalization Helper
+        def _normalize(s):
+            return str(s).replace('_', ' ').strip().lower()
+
+        top_name = _normalize(top_hit.get('classification', ''))
+        
+        # Check Identity Match (< 5% Divergence)
+        if best_dist < 0.05:
+             # Check WoRMS Promotion
+             # If top hit is 'uncultured' but we have a WoRMS match nearby?
+             # Or if the top hit *is* a WoRMS name, prefer it.
+             # Logic: If top_name is valid (not blacklisted) and in WoRMS, auto-accept.
+             
+             is_blacklisted = False
+             blacklist = ['uncultured', 'unidentified', 'metagenome', 'environmental']
+             for b in blacklist:
+                 if b in top_name: is_blacklisted = True
+             
+             final_name = top_hit.get('classification') # Original casing
+             
+             # WoRMS Override
+             if top_name in self.worms_ref_data:
+                 status = "Known (WoRMS)"
+             elif not is_blacklisted:
+                 status = "Known"
+             else:
+                 # It's a close match to "Uncultured bacterium" - still effectively unknown/novel
+                 status = "Ambiguous"
+
+             if status.startswith("Known"):
+                 return {
+                    "status": "Identified",
+                    "classification": final_name,
+                    "confidence": 1.0 - best_dist,
+                    "lineage": self._build_lineage_string(neighbors_df),
+                    "workflow": "Identity Match (Tier 1)"
+                }
+
+        # Flow continues to consensus if not a perfect match...
+        
         best_sim = 1.0 - best_dist
 
         # 1. Try Species Consensus First
