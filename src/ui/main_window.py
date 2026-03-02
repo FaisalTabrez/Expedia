@@ -47,7 +47,7 @@ class MainWindow(FluentWindow):
         # Connect Inference Request Signal to Worker Slot
         self.request_inference.connect(self.worker.run_inference)
         
-        # self.worker.moveToThread(self.worker_thread)
+        self.worker.moveToThread(self.worker_thread)
         
         # Initialize User Interfaces
         self.monitor_interface = MonitorView(self)
@@ -110,14 +110,6 @@ class MainWindow(FluentWindow):
             content=f"EXPLORING TOPOLOGY FOR SEQUENCE [{seq_id}]",
             orient=Qt.Orientation.Horizontal,
             isClosable=True,
-            position=InfoBarPosition.TOP_RIGHT,
-            duration=3000,
-            parent=self
-        ).show()
-        
-        # 3. Trigger Manifold Update
-        if vector is not None:
-             self.manifold_interface.generate_neighborhood_view(seq_id, vector)
             position=InfoBarPosition.TOP_RIGHT,
             duration=3000,
             parent=self
@@ -237,11 +229,10 @@ class MainWindow(FluentWindow):
 
     def start_inference(self, file_path):
         """Starts the worker thread."""
-        if self.worker_thread.isRunning():
-            return
-            
-        self.worker_thread.started.connect(lambda: self.worker.run_inference(file_path))
-        self.worker_thread.start()
+        if not self.worker_thread.isRunning():
+            self.worker_thread.start()
+        
+        self.request_inference.emit(file_path)
 
     def on_inference_started(self):
         self.monitor_interface.progress_bar.show()
