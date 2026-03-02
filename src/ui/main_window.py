@@ -99,11 +99,8 @@ class MainWindow(FluentWindow):
         ).show()
         
         # 3. Trigger Manifold Update
-        # We need to make sure ManifoldView has this method exposed
-        if hasattr(self.manifold_interface, "update_neighborhood") and vector is not None:
-             self.manifold_interface.update_neighborhood(vector, seq_id)
-        elif hasattr(self.manifold_interface, "generate_neighborhood_view") and vector is not None:
-             self.manifold_interface.generate_neighborhood_view(seq_id, vector) # Corrected signature: (query_id, query_vector)
+        if vector is not None:
+             self.manifold_interface.generate_neighborhood_view(seq_id, vector)
 
     def init_navigation(self):
         """
