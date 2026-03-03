@@ -39,38 +39,17 @@ class DiscoveryWorker(QObject):
         self._is_running = False
         self._process = None
 
-    def run_inference(self, file_path: str):
+    def _ensure_kernel_started(self):
         """
-        Main execution loop.
-        Launches the Science Kernel and pipes data.
+        Idempotent function to ensure the Science Kernel process is running.
         """
-        self._is_running = True
-        self.started.emit()
-        
-        results_buffer = []
-        ntu_clusters = []
-        
-        # 1. Pre-Flight: Count records for progress bar
-        total_records = 0
-        try:
-            path = Path(file_path)
-            if not path.exists():
-                raise FileNotFoundError(f"File not found: {file_path}")
-                
-            with open(path, "r") as f:
-                for line in f:
-                    if line.startswith(">"):
-                        total_records += 1
-            
-            if total_records == 0:
-                raise ValueError("No sequences found in FASTA file.")
-                
-        except Exception as e:
-            self.error.emit(str(e))
-            self.finished.emit()
-            return
+        if self._process is not None:
+             if self._process.poll() is None:
+                 return # Already running
+             else:
+                 logger.warning(f"Kernel process died with code {self._process.returncode}. Restarting...")
 
-        # 2. Launch Science Kernel
+        # Launch Science Kernel
         kernel_path = os.path.join(os.path.dirname(__file__), "science_kernel.py")
         cmd = [sys.executable, kernel_path]
         
@@ -82,9 +61,17 @@ class DiscoveryWorker(QObject):
         
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
         if "PYTHONPATH" in env:
-            env["PYTHONPATH"] = project_root + os.pathsep + env["PYTHONPATH"]
+             env["PYTHONPATH"] = project_root + os.pathsep + env["PYTHONPATH"]
         else:
-            env["PYTHONPATH"] = project_root
+             env["PYTHONPATH"] = project_root
+             
+        # Add DLL paths on Windows to find OpenMP/BLAS
+        if sys.platform == "win32":
+            library_paths = [
+                 os.path.join(sys.prefix, 'Library', 'bin'),
+                 os.path.join(sys.prefix, 'bin')
+            ]
+            env["PATH"] = os.pathsep.join(library_paths) + os.pathsep + env.get("PATH", "")
 
         logger.info(f"Launching Science Kernel: {kernel_path} [Root: {app_config.DATA_ROOT}]")
         
@@ -119,155 +106,143 @@ class DiscoveryWorker(QObject):
                     msg = json.loads(ready_line)
                     if msg.get("type") == "log":
                          logger.info(f"KERNEL LOG: {msg.get('message')}")
-                         # self.progress.emit(0) # Keep signals valid
                     elif msg.get("type") == "status" and msg.get("status") == "ready":
                          logger.info("Kernel reported READY status.")
                          break
-                    else:
-                         logger.warning(f"Unexpected startup JSON: {msg}")
                 except json.JSONDecodeError:
                      logger.warning(f"Kernel sent non-JSON on startup: {ready_line.strip()}")
-
-            logger.info("Kernel Ready. Sending process command...")
-            
-            # Send Command
-            command = json.dumps({
-                "command": "process_fasta",
-                "file_path": str(path)
-            })
-            self._process.stdin.write(command + "\n")
-            self._process.stdin.flush()
-            
-            # 4. Event Loop (Reading Output)
-            processed_count = 0
-            
-            while self._is_running:
-                # Blocking read (line by line)
-                line = self._process.stdout.readline()
-                
-                if not line and self._process.poll() is not None:
-                    break # Process ended
-                
-                if not line:
-                    continue
-
-                try:
-                    message = json.loads(line)
-                    msg_type = message.get("type")
-                    
-                    if msg_type == "result":
-                        # Standard Result
-                        data = message.get("data")
-                        results_buffer.append(data)
-                        self.sequence_processed.emit(data)
-                        
-                        processed_count += 1
-                        pct = int((processed_count / total_records) * 100)
-                        self.progress.emit(pct)
-                        
-                    elif msg_type == "discovery_results":
-                        # HDBSCAN Output
-                        # Legacy format support
-                        ntu_clusters.extend(message.get("data", []))
-                        logger.info(f"Received {len(ntu_clusters)} Discovery Clusters from Kernel (Legacy).")
-
-                    elif msg_type == "batch_discovery_summary":
-                        # Full Satellite Cluster Aggregation
-                        ntus = message.get("ntus", [])
-                        isolated_count = message.get("isolated_count", 0)
-                        
-                        logger.info(f"Received Discovery Summary: {len(ntus)} NTUs, {isolated_count} Isolated.")
-                        
-                        # Store for batch_complete emit
-                        ntu_clusters = ntus 
-                        # We could also expose isolated taxa if needed, but UI primarily wants clusters
-
-                    elif msg_type == "manifold_data":
-                        # Manifold Output
-                        logger.info("Localized Manifold Calculated.")
-                        self.localized_topology_ready.emit(message)
-
-                    elif msg_type == "finished":
-                        logger.info("Kernel finished processing.")
-                        break
-                        
-                    elif msg_type == "error":
-                        err_msg = message.get("message", "Unknown Kernel Error")
-                        trace = message.get("traceback", "")
-                        logger.error(f"Kernel Error: {err_msg}\n{trace}")
-                        self.error.emit(f"Science Kernel: {err_msg}")
-                        break
-                        
-                except json.JSONDecodeError:
-                    # Robust parsing: Treat non-JSON lines as log messages
-                    raw_msg = line.strip()
-                    if raw_msg:
-                        logger.info(f"KERNEL RAW: {raw_msg}")
-                        self.kernel_log.emit(raw_msg)
-            
-            # 5. Cleanup
-            self.batch_complete.emit(results_buffer, ntu_clusters)
-            self.finished.emit()
-
+                     
         except Exception as e:
-            logger.error(f"Worker Orchestration Error: {e}")
+            logger.error(f"Failed to start Science Kernel: {e}")
+            self._process = None
+            raise
+
+    def run_inference(self, file_path: str):
+        """
+        Main execution loop.
+        Launches the Science Kernel and pipes data.
+        """
+        self._is_running = True
+        self.started.emit()
+        
+        results_buffer = []
+        ntu_clusters = []
+        
+        # 1. Pre-Flight: Count records for progress bar
+        total_records = 0
+        try:
+            path = Path(file_path)
+            if not path.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+                
+            with open(path, "r") as f:
+                for line in f:
+                    if line.startswith(">"):
+                        total_records += 1
+            
+            if total_records == 0:
+                raise ValueError("No sequences found in FASTA file.")
+                
+            self._ensure_kernel_started()
+                
+        except Exception as e:
             self.error.emit(str(e))
             self.finished.emit()
-        finally:
-            self.stop_kernel()
-            self._is_running = False
+            return
+            
+        logger.info("Sending process command...")
+        
+        # Send Command
+        command = json.dumps({
+            "command": "process_fasta",
+            "file_path": str(path)
+        })
+        self._process.stdin.write(command + "\n")
+        self._process.stdin.flush()
+        
+        # 4. Event Loop (Reading Output)
+        processed_count = 0
+        
+        while self._is_running:
+            # Blocking read (line by line)
+            line = self._process.stdout.readline()
+            
+            if not line:
+                if self._process.poll() is not None:
+                    break # Process ended unexpectedly
+                continue
+
+            try:
+                message = json.loads(line)
+                msg_type = message.get("type")
+                
+                if msg_type == "result":
+                    # Standard Result
+                    data = message.get("data")
+                    results_buffer.append(data)
+                    self.sequence_processed.emit(data)
+                    
+                    processed_count += 1
+                    pct = int((processed_count / total_records) * 100)
+                    self.progress.emit(pct)
+                    
+                elif msg_type == "discovery_results":
+                    # HDBSCAN Output
+                    # Legacy format support
+                    ntu_clusters.extend(message.get("data", []))
+                    logger.info(f"Received {len(ntu_clusters)} Discovery Clusters from Kernel (Legacy).")
+
+                elif msg_type == "batch_discovery_summary":
+                    # Full Satellite Cluster Aggregation
+                    ntus = message.get("ntus", [])
+                    isolated_count = message.get("isolated_count", 0)
+                    
+                    logger.info(f"Received Discovery Summary: {len(ntus)} NTUs, {isolated_count} Isolated.")
+                    
+                    # Store for batch_complete emit
+                    ntu_clusters = ntus 
+
+                elif msg_type == "status" and message.get("status") == "idle":
+                    logger.info("Kernel reported IDLE. Batch complete.")
+                    break
+
+                elif msg_type == "finished": # Legacy fallback
+                    logger.info("Kernel finished processing (Legacy Signal).")
+                    break
+                    
+                elif msg_type == "error":
+                    err_msg = message.get("message", "Unknown Kernel Error")
+                    trace = message.get("traceback", "")
+                    logger.error(f"Kernel Error: {err_msg}\n{trace}")
+                    self.error.emit(f"Science Kernel: {err_msg}")
+                    break
+                    
+            except json.JSONDecodeError:
+                # Robust parsing: Treat non-JSON lines as log messages
+                raw_msg = line.strip()
+                if raw_msg:
+                    logger.info(f"KERNEL RAW: {raw_msg}")
+                    self.kernel_log.emit(raw_msg)
+        
+        # 5. Cleanup
+        # DO NOT STOP KERNEL HERE. IT MUST REMAIN ALIVE FOR TOPOLOGY.
+        self.batch_complete.emit(results_buffer, ntu_clusters)
+        self.finished.emit()
+        self._is_running = False
 
     def request_localized_topology(self, payload: dict):
         """
         Runs the 'get_localized_topology' command cleanly.
-        Spawns a transient Kernel process to avoid blocking the main ingestion pipeline.
+        Now reuses the persistent Kernel process.
         """
         if not payload: return
 
         vector = payload.get("vector")
         record_id = payload.get("id", "Unknown")
         
-        # 1. Start Transient Subprocess
-        python_exe = sys.executable 
-        kernel_path = Path(__file__).parent / "science_kernel.py"
-        
-        # Env setup (same as main worker)
-        env = os.environ.copy()
-        env["EXPEDIA_ROOT_PATH"] = str(app_config.DATA_ROOT)
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        if "PYTHONPATH" in env:
-            env["PYTHONPATH"] = project_root + os.pathsep + env["PYTHONPATH"]
-        else:
-            env["PYTHONPATH"] = project_root
-
-        logger.info(f"Worker: Launching Topology Kernel for {record_id}...")
-        
         try:
-            # We use a separate process variable to not clobber the main self._process if running
-            topo_process = subprocess.Popen(
-                [python_exe, str(kernel_path)],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=sys.stderr, # Forward stderr to console for debugging
-                env=env,
-                text=True,
-                bufsize=1,
-                encoding='utf-8'
-            )
+            self._ensure_kernel_started()
             
-            if not topo_process.stdout or not topo_process.stdin:
-                logger.error("Failed to open pipes for topology kernel.")
-                return
-
-            # Handshake
-            while True:
-                line = topo_process.stdout.readline()
-                if not line: break
-                try:
-                    msg = json.loads(line)
-                    if msg.get("status") == "ready": break
-                except: pass
-
             # Send Command
             cmd = json.dumps({
                 "command": "get_localized_topology",
@@ -275,14 +250,14 @@ class DiscoveryWorker(QObject):
                 "id": record_id,
                 "k": 500
             })
-            topo_process.stdin.write(cmd + "\n")
-            topo_process.stdin.flush()
+            self._process.stdin.write(cmd + "\n")
+            self._process.stdin.flush()
             
             logger.info("[WORKER] Command sent to Kernel. Awaiting Manifold JSON...")
             
             # Read Response
             while True:
-                line = topo_process.stdout.readline()
+                line = self._process.stdout.readline()
                 if not line: break
                 
                 # Check for empty lines to avoid spamming
@@ -292,10 +267,23 @@ class DiscoveryWorker(QObject):
                 try:
                      # Robust JSON decoding
                     msg = json.loads(line)
+                    
+                    # Check for IDLE status which means done or aborted
+                    if msg.get("type") == "status" and msg.get("status") == "idle":
+                         # Should have received topology before this
+                         break
+
                     if msg.get("type") == "localized_manifold":
                         # Standard Payload
                         self.localized_topology_ready.emit(msg)
-                        break
+                        # Don't break yet, wait for IDLE signal to keep sync or break if we only expect one response?
+                        # The Kernel emits IDLE *after* the command.
+                        # So we can break here if we trust one response per command. 
+                        # But better to consume until idle to clear pipe?
+                        # Actually standard practice: break on result, but what about the "idle" message following it?
+                        # If we leave "idle" in the pipe, next read will see it.
+                        pass
+                        
                     elif msg.get("type") == "localized_manifold_ready":
                         # Disk Handshake (Large Payload)
                         logger.info("[WORKER] Large payload detected. Successfully offloaded to disk handshake.")
@@ -314,33 +302,38 @@ class DiscoveryWorker(QObject):
                                     os.remove(file_path)
                                 except Exception as clean_err:
                                     logger.warning(f"Failed to delete temp handshake file: {clean_err}")
-                                
-                                break
                             else:
                                 logger.error(f"Handshake file missing: {file_path}")
                                 self.error.emit("Protocol Error: Handshake file missing")
-                                break
                                 
                         except Exception as file_err:
                             logger.error(f"Handshake Read Failed: {file_err}")
                             self.error.emit(f"Handshake Failed: {file_err}")
-                            break
+                            
+                        # Same logic about IDLE signal...
 
                     elif msg.get("type") == "error":
                         self.error.emit(msg.get("message"))
-                        break
+                        # Consuming until idle is safer
+                        
                 except json.JSONDecodeError:
                     # Might be a log message from kernel
                     logger.info(f"[KERNEL LOG] {line.strip()}")
                 except Exception as e:
                     logger.warning(f"Worker Parse Error: {e}")
             
-            # Cleanup
-            topo_process.terminate()
+            # Since we are reusing the process, we CANNOT do:
+            # while True: readline()
+            # Because it will block forever waiting for next command output.
+            # So we MUST break when we get the response OR the "idle" signal.
+            
+            # Rethink loop: Loop until IDLE.
+            pass
 
         except Exception as e:
             logger.error(f"Topology Request Failed: {e}")
             self.error.emit(str(e))
+
 
     def stop_kernel(self):
         """Terminates the subprocess safely."""

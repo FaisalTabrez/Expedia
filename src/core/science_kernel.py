@@ -141,7 +141,13 @@ class ScienceKernel:
         # print(json.dumps({"type": "status", "status": "ready"}))
         # sys.stdout.flush()
 
-        for line in sys.stdin:
+        # Persistent Service Loop
+        while True:
+            # Blocking read line by line
+            line = sys.stdin.readline()
+            if not line:
+                break # EOF from parent
+
             try:
                 line = line.strip()
                 if not line:
@@ -163,17 +169,29 @@ class ScienceKernel:
                 else:
                     logger.warning(f"Unknown command: {cmd_type}")
 
+                # Idle Signal - Ready for next command
+                # Wrapped in try-except for pipe safety
+                try:
+                    if sys.__stdout__:
+                        sys.__stdout__.write(json.dumps({"type": "status", "status": "idle"}) + "\n")
+                        sys.__stdout__.flush()
+                except OSError:
+                    pass
+
             except json.JSONDecodeError:
                 logger.error("Invalid JSON received.")
             except Exception as e:
                 logger.error(f"Kernel Loop Error: {e}")
-                if sys.__stdout__:
-                    sys.__stdout__.write(json.dumps({
-                        "type": "error",
-                        "message": str(e),
-                        "traceback": traceback.format_exc()
-                    }) + "\n")
-                    sys.__stdout__.flush()
+                try:
+                    if sys.__stdout__:
+                        sys.__stdout__.write(json.dumps({
+                            "type": "error",
+                            "message": str(e),
+                            "traceback": traceback.format_exc()
+                        }) + "\n")
+                        sys.__stdout__.flush()
+                except OSError:
+                    pass
 
     def process_fasta(self, file_path):
         """

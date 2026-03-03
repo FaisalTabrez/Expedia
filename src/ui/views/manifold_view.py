@@ -176,7 +176,16 @@ class ManifoldView(QWidget):
         """
         Renders the 3D plot from Kernel JSON data.
         """
+        # State Reset
+        if hasattr(self, 'loading_overlay'):
+            self.loading_overlay.hide()
+
         logger.info("Rendering Manifold from Kernel Data")
+        
+        # Debug Logging (JavaScript Handshake)
+        neighborhood_size = len(data.get("neighbors", []))
+        print(f"UI: Received Manifold Data. Points: {neighborhood_size + 1}")
+
         self.has_content = True
         
         # Immediate UI Clean
@@ -343,8 +352,9 @@ class ManifoldView(QWidget):
         )
 
         if WEB_ENGINE_AVAILABLE:
+            import os # Ensure os is available for CWD
             html = fig.to_html(include_plotlyjs='cdn', full_html=True)
-            self.web_view.setHtml(html)
+            self.web_view.setHtml(html, baseUrl=QUrl.fromLocalFile(os.getcwd()))
         else:
             # STATIC CAPTURE FALLBACK
             try:
