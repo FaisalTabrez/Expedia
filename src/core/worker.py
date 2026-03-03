@@ -149,6 +149,11 @@ class DiscoveryWorker(QObject):
             self.error.emit(str(e))
             self.finished.emit()
             return
+
+        if self._process is None or self._process.stdin is None:
+            self.error.emit("Kernel initialization failed.")
+            self.finished.emit()
+            return
             
         logger.info("Sending process command...")
         
@@ -164,6 +169,9 @@ class DiscoveryWorker(QObject):
         processed_count = 0
         
         while self._is_running:
+            if self._process is None or self._process.stdout is None:
+                break
+
             # Blocking read (line by line)
             line = self._process.stdout.readline()
             
@@ -243,6 +251,10 @@ class DiscoveryWorker(QObject):
         try:
             self._ensure_kernel_started()
             
+            if self._process is None or self._process.stdin is None:
+                self.error.emit("Kernel unavailable for topology request.")
+                return
+
             # Send Command
             cmd = json.dumps({
                 "command": "get_localized_topology",
@@ -257,6 +269,10 @@ class DiscoveryWorker(QObject):
             
             # Read Response
             while True:
+                if self._process is None or self._process.stdout is None:
+                     self.error.emit("Kernel disconnected during topology request.")
+                     break
+
                 line = self._process.stdout.readline()
                 if not line: break
                 

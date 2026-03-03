@@ -27,7 +27,7 @@ except ImportError as e:
             self.label.setStyleSheet("color: #666; font-size: 14px;")
             self.v_layout.addWidget(self.label)
             
-        def setHtml(self, html, base_url=None):
+        def setHtml(self, html, baseUrl=None):
             # No-op for HTML, we need setPixmap or similar for static fallback
             pass
             
@@ -99,6 +99,13 @@ class ManifoldView(QWidget):
 
         # Database Link (Initialized on demand or passed in)
         self.db = AtlasManager() 
+        
+        # UI Components for Loading (needed for handle_error)
+        self.loading_overlay = QLabel(self)
+        self.loading_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_overlay.setStyleSheet("background-color: rgba(0, 0, 0, 0.8); color: #00E5FF; font-size: 16px;")
+        self.loading_overlay.setText("Creating Manifold...")
+        self.loading_overlay.hide()
 
         # State
         self.current_query_vector = None
@@ -182,8 +189,8 @@ class ManifoldView(QWidget):
             
         from qfluentwidgets import InfoBar, InfoBarPosition
         InfoBar.error(
-            title='Topology Error',
-            content=message,
+            title='Topology Reconstruction Failed',
+            content=f'{message}',
             orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP_RIGHT,

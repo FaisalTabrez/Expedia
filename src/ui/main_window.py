@@ -287,7 +287,12 @@ class MainWindow(FluentWindow):
         """
         Handle completion.
         """
-        self.monitor_interface.log_message(f"System > Batch Complete. {len(results)} sequences processed.")
+        msg = f"System > Batch Complete. {len(results)} sequences processed."
+        if ntu_clusters:
+            msg += f" Found {len(ntu_clusters)} clusters."
+        self.monitor_interface.log_message(msg)
+        print(f'UI: Batch complete. Received {len(results)} results and {len(ntu_clusters)} clusters.')
+        
         self.monitor_interface.progress_bar.hide()
         
         # Store State
@@ -386,13 +391,14 @@ class MainWindow(FluentWindow):
     def on_view_cluster_topology(self, payload: dict):
         """
         Redirects to Manifold View and visualizes the cluster.
-        payload: { "id": str, "vector": np.array, ... }
+        payload: { "id": str, "vector": np.array, ... } or { "ntu_id": str, "centroid": np.array, ... }
         """
         # Switch to Manifold Interface
         self.switchTo(self.manifold_interface)
         
-        vector = payload.get('vector')
-        seq_id = payload.get('id')
+        # Determine payload type (Sequence or Cluster)
+        vector = payload.get('vector') or payload.get('centroid')
+        seq_id = payload.get('id') or payload.get('ntu_id')
         
         if vector is not None:
              self.manifold_interface.show_loading()
@@ -407,6 +413,8 @@ class MainWindow(FluentWindow):
                  "vector": vector
              }
              self.request_localized_manifold.emit(worker_payload)
+        else:
+             self.monitor_interface.log_message(f"ERROR > Invalid Manifold Request: Missing Vector for {seq_id}")
 
 
     def on_worker_error(self, err_msg):
@@ -428,25 +436,6 @@ class MainWindow(FluentWindow):
             duration=5000,
             parent=self
         )
-
-    def on_view_cluster_topology(self, ntu_data):
-        """
-        Redirects to Manifold View and visualizes the cluster.
-        """
-        # Switch to Manifold Interface
-        self.switchTo(self.manifold_interface)
-        
-        # Trigger visualization
-        # We use the centroid as the query vector for visualization
-        centroid = ntu_data.get('centroid')
-        # ntu_id = ntu_data.get('ntu_id') # Unused for vector query
-        
-        if centroid is not None:
-             if not self.worker_thread.isRunning():
-                 self.worker_thread.start()
-             
-             self.request_localized_manifold.emit(centroid)
-             self.manifold_interface.show_loading()
 
     def closeEvent(self, event):
         """

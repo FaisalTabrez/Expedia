@@ -105,6 +105,17 @@ except ImportError as e:
         sys.__stdout__.flush()
     sys.exit(1)
 
+SCHEMA_MAP = {
+    'AccessionID': 'id',
+    'ScientificName': 'classification', 
+    'Lineage': 'lineage',
+    'Vector': 'vector',
+    'vector': 'vector', # Handle pre-normalized
+    'id': 'id',
+    'classification': 'classification',
+    'lineage': 'lineage'
+}
+
 class ScienceKernel:
     """
     @Neural-Core: Standalone Scientific Process.
@@ -400,13 +411,31 @@ class ScienceKernel:
             query_vector = np.array(vector, dtype=np.float32)
             
             # 1. Fetch Neighbors
-            # vector_search returns a DataFrame with 'vector', 'id', 'classification', 'lineage', 'dist'
+            # vector_search returns a DataFrame with columns that might vary by DB version
             df_neighbors = self.db.vector_search(query_vector, top_k=k)
             
-            # Normalize column names to avoid key errors (e.g. 'Vector' vs 'vector')
+            # Dynamic Column Renaming via SCHEMA_MAP
             if not df_neighbors.empty:
+                # 1. Case-insensitive matching first
+                rename_dict = {}
+                cols = df_neighbors.columns
+                for col in cols:
+                     # Check direct map
+                     if col in SCHEMA_MAP:
+                         rename_dict[col] = SCHEMA_MAP[col]
+                     else:
+                         # Case-insensitive check
+                         for k_map, v_map in SCHEMA_MAP.items():
+                             if col.lower() == k_map.lower():
+                                 rename_dict[col] = v_map
+                                 break
+                
+                if rename_dict:
+                    df_neighbors = df_neighbors.rename(columns=rename_dict)
+                
+                # Force lowercase for any remaining consistency
                 df_neighbors.columns = [c.lower() for c in df_neighbors.columns]
-            
+
             if df_neighbors.empty:
                 logger.warning("No neighbors found.")
                 if sys.__stdout__:
@@ -417,9 +446,25 @@ class ScienceKernel:
                         pass
                 return
 
+            # Validate Required Columns
+            required = ['vector', 'id']
+            missing = [r for r in required if r not in df_neighbors.columns]
+            if missing:
+                raise KeyError(f"Missing required columns from database: {missing}. Found: {df_neighbors.columns.tolist()}")
+
             # 2. Prepare Data Matrix (501 points)
             # Row 0 is ALWAYS the Query
-            neighbor_vectors = np.stack(df_neighbors['vector'].tolist())
+            try:
+                 # Check strict filtering by ID
+                 # Filter out the query itself if it appears in neighbors (to avoid duplicate at 0 dist)
+                 if record_id != "Unknown":
+                      df_neighbors = df_neighbors[df_neighbors['id'] != record_id]
+                      
+                 neighbor_vectors = np.stack(df_neighbors['vector'].tolist())
+            except KeyError as ke:
+                 logger.error(f"Vector Column Missing: {ke}")
+                 raise
+                 
             all_vectors = np.vstack([query_vector, neighbor_vectors])
             
             # Metadata sync

@@ -32,7 +32,7 @@ class DiscoveryReporter:
             return Path("results")
 
     @staticmethod
-    def save_discovery_manifest(ntu_list: list, session_log_path: str = None) -> str:
+    def save_discovery_manifest(ntu_list: list, session_log_path: str = "") -> str:
         """
         Exports a ZIP archive containing:
         - Manifest.csv: Taxa details
