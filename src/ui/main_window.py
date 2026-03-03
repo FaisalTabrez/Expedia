@@ -283,7 +283,7 @@ class MainWindow(FluentWindow):
         
         # Also could update specific topology if we wanted to auto-follow
 
-    def on_batch_complete(self, results, ntu_clusters):
+    def on_batch_complete(self, results: list, ntu_clusters: list):
         """
         Handle completion.
         """
@@ -301,7 +301,8 @@ class MainWindow(FluentWindow):
                  self.monitor_interface.log_message(f"Discovery > No clusters. Found {len(self.current_isolated)} isolated NRTs.")
 
         # Update Discovery View
-        self.discovery_interface.populate_ntus(self.current_ntus, self.current_isolated)
+        # Passing full results allows the view to filter or display all sequences if needed
+        self.discovery_interface.populate_ntus(ntu_clusters, results)
         
         # Notify
         from qfluentwidgets import InfoBar, InfoBarPosition
@@ -410,6 +411,11 @@ class MainWindow(FluentWindow):
 
     def on_worker_error(self, err_msg):
         self.monitor_interface.log_message(f"ERROR > {err_msg}")
+        
+        # Reset specific views if they were waiting
+        if hasattr(self, 'manifold_interface'):
+            self.manifold_interface.handle_error(err_msg)
+            
         self.worker_thread.quit()
         
         from qfluentwidgets import InfoBar, InfoBarPosition

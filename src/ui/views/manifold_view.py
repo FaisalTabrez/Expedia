@@ -172,6 +172,26 @@ class ManifoldView(QWidget):
         # Just show loading until the async worker comes back (if it was triggered separately).
         self.show_loading()
 
+    def handle_error(self, message: str):
+        """
+        Handles topology generation errors gracefully.
+        """
+        logger.error(f"Manifold Error: {message}")
+        if hasattr(self, 'loading_overlay'):
+            self.loading_overlay.hide()
+            
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        InfoBar.error(
+            title='Topology Error',
+            content=message,
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP_RIGHT,
+            duration=8000,
+            parent=self
+        )
+        self.show_empty_state()
+
     def render_manifold(self, data: dict):
         """
         Renders the 3D plot from Kernel JSON data.

@@ -394,17 +394,27 @@ class ScienceKernel:
         logger.info(f"[KERNEL] Computing localized topology for ID: {record_id} with {k} neighbors")
         
         try:
+            if vector is None:
+                raise ValueError("Vector key missing from input payload.")
+                
             query_vector = np.array(vector, dtype=np.float32)
             
             # 1. Fetch Neighbors
             # vector_search returns a DataFrame with 'vector', 'id', 'classification', 'lineage', 'dist'
             df_neighbors = self.db.vector_search(query_vector, top_k=k)
             
+            # Normalize column names to avoid key errors (e.g. 'Vector' vs 'vector')
+            if not df_neighbors.empty:
+                df_neighbors.columns = [c.lower() for c in df_neighbors.columns]
+            
             if df_neighbors.empty:
                 logger.warning("No neighbors found.")
                 if sys.__stdout__:
-                    sys.__stdout__.write(json.dumps({"type": "manifold_data", "data": [], "status": "empty"}) + "\n")
-                    sys.__stdout__.flush()
+                    try:
+                        sys.__stdout__.write(json.dumps({"type": "manifold_data", "data": [], "status": "empty"}) + "\n")
+                        sys.__stdout__.flush()
+                    except OSError:
+                        pass
                 return
 
             # 2. Prepare Data Matrix (501 points)
