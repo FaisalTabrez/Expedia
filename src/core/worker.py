@@ -293,9 +293,39 @@ class DiscoveryWorker(QObject):
                      # Robust JSON decoding
                     msg = json.loads(line)
                     if msg.get("type") == "localized_manifold":
-                        # Success
+                        # Standard Payload
                         self.localized_topology_ready.emit(msg)
                         break
+                    elif msg.get("type") == "localized_manifold_ready":
+                        # Disk Handshake (Large Payload)
+                        logger.info("[WORKER] Large payload detected. Successfully offloaded to disk handshake.")
+                        file_path = msg.get("file_path")
+                        
+                        try:
+                            # Asynchronous File Read
+                            if os.path.exists(file_path):
+                                with open(file_path, 'r', encoding='utf-8') as f:
+                                    data = json.load(f)
+                                
+                                self.localized_topology_ready.emit(data)
+                                
+                                # Cleanup to keep drive clean
+                                try:
+                                    os.remove(file_path)
+                                except Exception as clean_err:
+                                    logger.warning(f"Failed to delete temp handshake file: {clean_err}")
+                                
+                                break
+                            else:
+                                logger.error(f"Handshake file missing: {file_path}")
+                                self.error.emit("Protocol Error: Handshake file missing")
+                                break
+                                
+                        except Exception as file_err:
+                            logger.error(f"Handshake Read Failed: {file_err}")
+                            self.error.emit(f"Handshake Failed: {file_err}")
+                            break
+
                     elif msg.get("type") == "error":
                         self.error.emit(msg.get("message"))
                         break

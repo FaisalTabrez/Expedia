@@ -450,19 +450,22 @@ class ScienceKernel:
                 "consensus": consensus_summary,
                 "query": {
                     "coords": query_pc,
-                    "label": int(query_label) if 'labels' in locals() else -1
+                    "label": int(query_label) if 'labels' in locals() else -1,
+                    "isolated_id": f"iso_query" if query_label == -1 else None
                 },
                 "neighbors": []
             }
             
             for i, pc in enumerate(neighbors_pc):
                 meta = neighbor_meta[i]
+                lbl = int(labels[i+1]) if 'labels' in locals() else -1
                 response["neighbors"].append({
                     "coords": pc,
                     "id": meta.get('id'),
                     "classification": meta.get('classification'),
                     "lineage": meta.get('lineage'),
-                    "label": int(labels[i+1]) if 'labels' in locals() else -1
+                    "label": lbl,
+                    "isolated_id": f"iso_{i}" if lbl == -1 else None
                 })
             
             # Safe Serialization Helper
@@ -475,9 +478,29 @@ class ScienceKernel:
 
             clean_response = _make_json_serializable(response)
 
-            logger.info("KERNEL: Sending 500-neighbor localized manifold.")
+            # Disk-Based Data Handshake
+            # Fallback path if E: doesn't exist
+            base_dir = r"E:\EXPEDIA_Data\data\db"
+            if not os.path.exists(base_dir):
+                 # Try to create it, or fallback to temp relative to CWD
+                 try:
+                     os.makedirs(base_dir, exist_ok=True)
+                 except:
+                     base_dir = os.path.join(os.getcwd(), 'temp_db')
+                     os.makedirs(base_dir, exist_ok=True)
+
+            temp_path = os.path.join(base_dir, "temp_manifold.json")
+
+            logger.info(f"KERNEL: Offloading data handshake to: {temp_path}")
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(clean_response, f)
+
+            logger.info("KERNEL: Sending handshake notification.")
             if sys.__stdout__:
-                sys.__stdout__.write(json.dumps(clean_response) + "\n")
+                sys.__stdout__.write(json.dumps({
+                    "type": "localized_manifold_ready",
+                    "file_path": temp_path
+                }) + "\n")
                 sys.__stdout__.flush()
 
         except Exception as e:

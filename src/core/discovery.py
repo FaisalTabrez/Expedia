@@ -37,6 +37,7 @@ class DiscoveryEngine:
             min_dist=0.0, # Tight clusters
             n_components=10,
             metric='cosine',
+            n_jobs=1,
             random_state=42 # Reproducibility
         )
         
@@ -47,6 +48,7 @@ class DiscoveryEngine:
             min_dist=0.1, # Spread out for visibility
             n_components=3,
             metric='cosine',
+            n_jobs=1,
             random_state=42
         )
         
