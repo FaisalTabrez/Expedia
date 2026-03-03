@@ -111,7 +111,11 @@ class NTUCard(CardWidget):
         metrics_layout.addWidget(pop_val, 1, 0)
         
         # GENOMIC DIVERGENCE
-        divergence = float(ntu_data.get("divergence", 0.0))
+        try:
+             divergence = float(ntu_data.get("divergence", 0.0))
+        except (ValueError, TypeError):
+             divergence = 0.0
+
         metrics_layout.addWidget(CaptionLabel("DIVERGENCE", self), 0, 1)
         # Convert variance to Percentage Divergence (0.05 -> 5.0%)
         div_val = TitleLabel(f"{divergence*100:.1f}%", self) 
@@ -213,8 +217,24 @@ class DiscoveryView(QWidget):
             display_list = ntu_list
         elif isolated_taxa:
             is_isolated_mode = True
+            
+            # Limit isolated display to prevent UI freeze
+            # If we have 10,000 results, we don't want 10,000 cards.
+            # Show "All Novel" + "Sample of Known" or just "All Novel"?
+            # The input 'isolated_taxa' is 'results' (Mixed).
+            # Let's filter for Novel first.
+            
+            novel_subset = [t for t in isolated_taxa if t.get("status") == "Novel"]
+            
+            # If no novel items either, take top 50 of whatever is there (Known) 
+            target_list = novel_subset if novel_subset else isolated_taxa[:50]
+            
+            if len(target_list) > 100:
+                 # Hard cap for performance
+                 target_list = target_list[:100]
+            
             # Convert Isolated Taxa to Pseudo-Clusters
-            for taxon in isolated_taxa:
+            for taxon in target_list:
                 # Robust Safe-Guarding for undefined keys
                 display_list.append({
                     "ntu_id": taxon.get("id", "UNKNOWN-ISOLATE"),
