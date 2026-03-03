@@ -31,7 +31,7 @@ class DiscoveryWorker(QObject):
     error = Signal(str)
     progress = Signal(int)
     kernel_log = Signal(str)                # New signal for raw kernel logs
-    manifold_ready = Signal(dict)           # Emits Localized Topology JSON
+    localized_topology_ready = Signal(dict) # Emits Localized Topology JSON
     finished = Signal()
 
     def __init__(self):
@@ -185,7 +185,7 @@ class DiscoveryWorker(QObject):
                     elif msg_type == "manifold_data":
                         # Manifold Output
                         logger.info("Localized Manifold Calculated.")
-                        self.manifold_ready.emit(message)
+                        self.localized_topology_ready.emit(message)
 
                     elif msg_type == "finished":
                         logger.info("Kernel finished processing.")
@@ -288,10 +288,7 @@ class DiscoveryWorker(QObject):
                     msg = json.loads(line)
                     if msg.get("type") == "localized_manifold":
                         # Success
-                        self.manifold_ready.emit(msg)
-                        break
-                    elif msg.get("type") == "error":
-                        self.error.emit(msg.get("message"))
+                        self.localized_topology_ready.emit(msg)
                         break
                 except: pass
             

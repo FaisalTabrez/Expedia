@@ -153,6 +153,7 @@ THEME_COLORS = {
     "background": "#0A0F1E",  # Abyss Dark
     "primary": "#00E5FF",     # Cyan
     "accent": "#FF007A",      # Neon Pink
+    "text_primary": "#FFFFFF" # White
 }
 
 NAVIGATION_ITEMS = [

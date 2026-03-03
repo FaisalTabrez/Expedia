@@ -71,30 +71,9 @@ class MainWindow(FluentWindow):
         self.worker.sequence_processed.connect(self.on_sequence_processed)
         self.worker.localized_topology_ready.connect(self.on_localized_topology_ready)
 
-        # Initialize Navigation
-        self.init_navigation()
-        
-        # Status Bar Action
-        self.btn_export = QPushButton("EXPORT EXPEDITION DATA")
-        self.btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_export.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {app_config.THEME_COLORS['accent']};
-                color: {app_config.THEME_COLORS['text_primary']};
-                border: 1px solid #444;
-                border-radius: 4px;
-                padding: 4px 12px;
-                font-family: 'Segoe UI'; 
-                font-weight: 600;
-                font-size: 11px;
-            }}
-            QPushButton:hover {{
-                background-color: #00C2D6;
-            }}
-        """)
-        self.btn_export.clicked.connect(self.on_export_action)
-        self.statusBar().addWidget(self.btn_export) # Use addWidget for left align or addPermanent for right
-        self.statusBar().addPermanentWidget(QLabel("  ")) # Spacer
+        # Status Bar Action - Using Monitor View for Export to avoid crashes
+        if hasattr(self.monitor_interface, 'batch_summary'):
+             self.monitor_interface.batch_summary.request_report.connect(self.on_export_action)
 
         self.init_navigation()
         self.init_signals()
@@ -113,20 +92,14 @@ class MainWindow(FluentWindow):
         # Monitor -> Worker (Start Inference)
         self.monitor_interface.drop_zone.file_selected.connect(self.start_inference)
         
-        # Worker Signals
+        # Worker Signals (Additional to __init__)
         self.worker.started.connect(self.on_inference_started)
-        self.worker.sequence_processed.connect(self.on_sequence_processed)
-        self.worker.batch_complete.connect(self.on_batch_complete)
-        self.worker.error.connect(self.on_worker_error)
-        self.worker.progress.connect(self.monitor_interface.progress_bar.setValue)
+        
+        # Kernel logging
         self.worker.kernel_log.connect(self.monitor_interface.log_message)
-        self.worker.manifold_ready.connect(self.manifold_interface.render_manifold)
         
         # 3. Inter-View Navigation
         self.discovery_interface.request_cluster_view.connect(self.on_view_cluster_topology)
-
-        # 4. Export
-        self.monitor_interface.batch_summary.request_report.connect(self.export_discovery_manifest)
 
 
 
