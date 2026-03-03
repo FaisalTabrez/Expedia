@@ -59,7 +59,7 @@ class SessionSummaryPanel(QWidget):
         left_col.addWidget(self.card_richness)
         
         # 2. Novelty Ratio
-        self.card_novelty = self._create_kpi_card("NOVELTY RATIO", "0.0%", FIF.QUESTION_MARK)
+        self.card_novelty = self._create_kpi_card("NOVELTY RATIO", "0.0%", FIF.QUESTION)
         left_col.addWidget(self.card_novelty)
         
         # 3. Shannon Index
