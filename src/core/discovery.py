@@ -4,6 +4,11 @@ import pandas as pd
 import hdbscan
 from sklearn.preprocessing import Normalizer
 try:
+    from sklearn.decomposition import PCA
+except ImportError:
+    pass
+
+try:
     import umap
 except ImportError:
     # Fallback or try different import structure if needed, but standard is 'import umap'
@@ -26,6 +31,7 @@ class DiscoveryEngine:
         
         # 2. Discovery Manifold (10D)
         # Optimized for density-based clustering separation
+        # Create as instance attribute to modify later
         self.reducer_cluster = umap.UMAP(
             n_neighbors=15,
             min_dist=0.0, # Tight clusters
@@ -45,6 +51,7 @@ class DiscoveryEngine:
         )
         
         # 4. Density Clustering
+
         # Operates on the 10D manifold
         self.clusterer = hdbscan.HDBSCAN(
             min_cluster_size=2, # Ultra-sensitivity
@@ -95,6 +102,14 @@ class DiscoveryEngine:
 
         # C. Topology Generation
         try:
+            # 0. Adaptive Neighbors
+            n_neighbors = min(15, N - 1)
+            if n_neighbors < 2: n_neighbors = 2
+            
+            # Apply to clustered instances
+            # UMAP (10D)
+            self.reducer_cluster.n_neighbors = n_neighbors
+            
             # 1. Clustering Embedding (10D)
             # Ensure X_norm is numeric matrix
             result_10d = self.reducer_cluster.fit_transform(X_norm)
@@ -105,8 +120,24 @@ class DiscoveryEngine:
             labels = self.clusterer.fit_predict(embedding_10d)
             
             # 3. Visual Embedding (3D)
-            result_3d = self.reducer_vis.fit_transform(X_norm)
-            embedding_3d = result_3d[0] if isinstance(result_3d, tuple) else result_3d
+            # Robust Fallback for small batches
+            if N < 10:
+                logger.info(f"Small batch ({N} < 10). Falling back to PCA for visualization.")
+                try:
+                    # PCA Fallback
+                    pca = PCA(n_components=3)
+                    embedding_3d = pca.fit_transform(X_norm)
+                except Exception as pca_err:
+                     logger.warning(f"PCA Fallback failed ({pca_err}). Using random projection.")
+                     rng = np.random.RandomState(42)
+                     embedding_3d = rng.rand(N, 3)
+            else:
+                # Standard UMAP (3D)
+                # Update n_neighbors for visual reducer too
+                self.reducer_vis.n_neighbors = n_neighbors
+                
+                result_3d = self.reducer_vis.fit_transform(X_norm)
+                embedding_3d = result_3d[0] if isinstance(result_3d, tuple) else result_3d
 
             # 4. Outlier Resilience
             visuals = np.asarray(embedding_3d, dtype=np.float64)

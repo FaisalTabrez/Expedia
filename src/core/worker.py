@@ -278,19 +278,32 @@ class DiscoveryWorker(QObject):
             topo_process.stdin.write(cmd + "\n")
             topo_process.stdin.flush()
             
+            logger.info("[WORKER] Command sent to Kernel. Awaiting Manifold JSON...")
+            
             # Read Response
             while True:
                 line = topo_process.stdout.readline()
                 if not line: break
                 
-                logger.info(f"[WORKER] Received manifold data packet: {len(line)} bytes.")
+                # Check for empty lines to avoid spamming
+                if not line.strip(): continue 
+
+                logger.info(f"[WORKER] Received packet: {len(line)} bytes.")
                 try:
+                     # Robust JSON decoding
                     msg = json.loads(line)
                     if msg.get("type") == "localized_manifold":
                         # Success
                         self.localized_topology_ready.emit(msg)
                         break
-                except: pass
+                    elif msg.get("type") == "error":
+                        self.error.emit(msg.get("message"))
+                        break
+                except json.JSONDecodeError:
+                    # Might be a log message from kernel
+                    logger.info(f"[KERNEL LOG] {line.strip()}")
+                except Exception as e:
+                    logger.warning(f"Worker Parse Error: {e}")
             
             # Cleanup
             topo_process.terminate()

@@ -363,7 +363,14 @@ class ScienceKernel:
             self.initialize()
 
         if self.db is None:
-            logger.error("Database Engine failed to initialize. Cannot run topology.")
+            error_msg = "Database Engine failed to initialize. Cannot run topology."
+            logger.error(error_msg)
+            if sys.__stdout__:
+                sys.__stdout__.write(json.dumps({
+                    "type": "error", 
+                    "message": error_msg
+                }) + "\n")
+                sys.__stdout__.flush()
             return
             
         logger.info(f"[KERNEL] Computing localized topology for ID: {record_id} with {k} neighbors")
