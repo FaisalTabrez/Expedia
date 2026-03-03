@@ -1,5 +1,5 @@
 import sys
-from PySide6.QtCore import Qt, QSize, QThread, Signal
+from PySide6.QtCore import Qt, QSize, QThread, Signal, Slot
 from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import QApplication, QFrame, QVBoxLayout, QLabel
 
@@ -268,6 +268,7 @@ class MainWindow(FluentWindow):
         self.monitor_interface.progress_bar.show()
         self.monitor_interface.log_message("System > Inference Pipeline Started...")
 
+    @Slot(dict)
     def on_sequence_processed(self, result: dict):
         """
         Handle individual result.
@@ -283,10 +284,12 @@ class MainWindow(FluentWindow):
         
         # Also could update specific topology if we wanted to auto-follow
 
+    @Slot(list, list)
     def on_batch_complete(self, results: list, ntu_clusters: list):
         """
         Handle completion.
         """
+        print(f"DEBUG: on_batch_complete called with {len(results)} results, {len(ntu_clusters)} clusters")
         msg = f"System > Batch Complete. {len(results)} sequences processed."
         if ntu_clusters:
             msg += f" Found {len(ntu_clusters)} clusters."
@@ -301,10 +304,14 @@ class MainWindow(FluentWindow):
         
         # Determine Isolated Taxa if no clusters
         if not ntu_clusters:
-            self.current_isolated = [r for r in results if r.get("status") == "Novel"]
+            # Check safely for Novel status
+            self.current_isolated = [
+                r for r in results 
+                if r.get("status", "Unknown") == "Novel"
+            ]
             if self.current_isolated:
                  self.monitor_interface.log_message(f"Discovery > No clusters. Found {len(self.current_isolated)} isolated NRTs.")
-
+        
         # Update Discovery View
         # Passing full results allows the view to filter or display all sequences if needed
         self.discovery_interface.populate_ntus(ntu_clusters, results)
@@ -313,6 +320,7 @@ class MainWindow(FluentWindow):
         from qfluentwidgets import InfoBar, InfoBarPosition
         title = 'Expedition Scan Complete'
         msg = f'{len(ntu_clusters)} Novel Units Found.'
+        
         if not ntu_clusters and self.current_isolated:
              title = 'Analysis Complete (High Entropy)'
              msg = f'{len(self.current_isolated)} Isolated Taxa Identified.'

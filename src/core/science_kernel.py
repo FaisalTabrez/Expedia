@@ -414,27 +414,48 @@ class ScienceKernel:
             # vector_search returns a DataFrame with columns that might vary by DB version
             df_neighbors = self.db.vector_search(query_vector, top_k=k)
             
-            # Dynamic Column Renaming via SCHEMA_MAP
+            # Global Column Normalization
             if not df_neighbors.empty:
-                # 1. Case-insensitive matching first
-                rename_dict = {}
-                cols = df_neighbors.columns
-                for col in cols:
-                     # Check direct map
-                     if col in SCHEMA_MAP:
-                         rename_dict[col] = SCHEMA_MAP[col]
-                     else:
-                         # Case-insensitive check
-                         for k_map, v_map in SCHEMA_MAP.items():
-                             if col.lower() == k_map.lower():
-                                 rename_dict[col] = v_map
-                                 break
-                
-                if rename_dict:
-                    df_neighbors = df_neighbors.rename(columns=rename_dict)
-                
-                # Force lowercase for any remaining consistency
+                # Force lowercase
                 df_neighbors.columns = [c.lower() for c in df_neighbors.columns]
+                logger.info(f"[KERNEL] Available normalized columns: {df_neighbors.columns.tolist()}")
+
+                # Smart Lineage Mapping
+                if 'lineage' not in df_neighbors.columns:
+                     alternatives = ['taxonomy', 'phylum', 'gbseq_taxonomy', 'tax_string']
+                     found = False
+                     for alt in alternatives:
+                         if alt in df_neighbors.columns:
+                             df_neighbors = df_neighbors.rename(columns={alt: 'lineage'})
+                             found = True
+                             break
+                     
+                     if not found:
+                         logger.warning("Lineage column missing. Using 'Unclassified' placeholder.")
+                         df_neighbors['lineage'] = 'Unclassified'
+                
+                # ID Mapping
+                if 'id' not in df_neighbors.columns:
+                     if 'accessionid' in df_neighbors.columns:
+                         df_neighbors = df_neighbors.rename(columns={'accessionid': 'id'})
+                     elif 'seq_id' in df_neighbors.columns:
+                          df_neighbors = df_neighbors.rename(columns={'seq_id': 'id'})
+                
+                # Classification Mapping
+                if 'classification' not in df_neighbors.columns:
+                     if 'scientificname' in df_neighbors.columns:
+                         df_neighbors = df_neighbors.rename(columns={'scientificname': 'classification'})
+                     elif 'tax_name' in df_neighbors.columns:
+                         df_neighbors = df_neighbors.rename(columns={'tax_name': 'classification'})
+                
+                # Final Safety Fill
+                if 'classification' not in df_neighbors.columns:
+                     df_neighbors['classification'] = 'Unknown Organism'
+                     
+                if 'id' not in df_neighbors.columns:
+                     # This is critical but we can try to gen consistent IDs if really needed
+                     df_neighbors['id'] = [f"REF-{i}" for i in range(len(df_neighbors))]
+
 
             if df_neighbors.empty:
                 logger.warning("No neighbors found.")
@@ -447,6 +468,13 @@ class ScienceKernel:
                 return
 
             # Validate Required Columns
+            if 'vector' not in df_neighbors.columns:
+                 # Check for 'embedding' or 'vec'
+                 if 'embedding' in df_neighbors.columns:
+                      df_neighbors = df_neighbors.rename(columns={'embedding': 'vector'})
+                 elif 'vec' in df_neighbors.columns:
+                      df_neighbors = df_neighbors.rename(columns={'vec': 'vector'})
+            
             required = ['vector', 'id']
             missing = [r for r in required if r not in df_neighbors.columns]
             if missing:

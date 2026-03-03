@@ -215,13 +215,16 @@ class DiscoveryView(QWidget):
             is_isolated_mode = True
             # Convert Isolated Taxa to Pseudo-Clusters
             for taxon in isolated_taxa:
+                # Robust Safe-Guarding for undefined keys
                 display_list.append({
-                    "ntu_id": taxon.get("id", "UNKNOWN"),
-                    "anchor_taxon": taxon.get("classification", "Isolated Taxon"),
-                    "lineage": taxon.get("lineage", "No Consensus"),
+                    "ntu_id": taxon.get("id", "UNKNOWN-ISOLATE"),
+                    "anchor_taxon": taxon.get("classification") or "Incertae sedis",
+                    "lineage": taxon.get("lineage", "Lineage Unresolved"),
                     "size": 1,
                     "divergence": 1.0, 
-                    "centroid_vector": taxon.get('vector') # Pass vector if available
+                    # Ensure compatible vector access
+                    "centroid_vector": taxon.get('vector', taxon.get('embedding', None)),
+                    "centroid_id": taxon.get("id", "UNKNOWN")
                 })
             
             # Show InfoBar Warning

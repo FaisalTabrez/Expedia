@@ -379,9 +379,16 @@ class ManifoldView(QWidget):
         )
 
         if WEB_ENGINE_AVAILABLE:
-            import os # Ensure os is available for CWD
-            html = fig.to_html(include_plotlyjs='cdn', full_html=True)
-            self.web_view.setHtml(html, baseUrl=QUrl.fromLocalFile(os.getcwd()))
+            import os
+            try:
+                # FORCE OFFLINE MODE: Embed Plotly JS (~3MB)
+                # 'cdn' creates external dependency which fails in air-gapped labs
+                logger.info("Generating fully embedded HTML for offline visualization...")
+                html = fig.to_html(include_plotlyjs=True, full_html=True)
+                self.web_view.setHtml(html, baseUrl=QUrl.fromLocalFile(os.getcwd()))
+            except Exception as e:
+                logger.error(f"HTML render failed: {e}")
+                self.show_empty_state()
         else:
             # STATIC CAPTURE FALLBACK
             try:
