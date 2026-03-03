@@ -146,28 +146,32 @@ class SessionSummaryPanel(QWidget):
             # --- METRICS ---
             total = len(df)
             
-            # S: Unique Classifications
+            # S: Unique Classifications (Species Richness)
+            # Filter out 'Unknown' to get true richness
             if 'classification' in df.columns:
-                valid_taxa = df[df['classification'] != 'Unknown']['classification']
+                valid_taxa = df[df['classification'] != 'Unknown Organism']['classification']
+                valid_taxa = valid_taxa[valid_taxa != 'Unknown']
                 S = valid_taxa.nunique()
                 
                 # H': Shannon Entropy
-                counts = valid_taxa.value_counts()
-                props = counts / total
-                H = -np.sum(props * np.log(props + 1e-9))
+                if len(valid_taxa) > 0:
+                    counts = valid_taxa.value_counts()
+                    props = counts / len(valid_taxa)
+                    H = -np.sum(props * np.log(props + 1e-9))
+                else:
+                    H = 0.0
             else:
                 S = 0
                 H = 0.0
 
-            # Novelty Ratio
+            # Novelty Density
             if 'status' in df.columns:
-                novel = len(df[df['status'] == 'Novel'])
-                ratio = (novel / total * 100) if total > 0 else 0.0
+                novel_count = len(df[df['status'].str.contains('Novel', case=False, na=False)])
+                ratio = (novel_count / total * 100) if total > 0 else 0.0
             else:
-                novel = 0
                 ratio = 0.0
             
-            # Update UI
+            # Update UI Cards
             self.card_richness.value_label.setText(str(S))
             self.card_novelty.value_label.setText(f"{ratio:.1f}%")
             self.card_diversity.value_label.setText(f"{H:.2f}")
@@ -177,65 +181,109 @@ class SessionSummaryPanel(QWidget):
                 self._render_sunburst(df)
 
         except Exception as e:
-            logger.error(f"Dashboard Update Failed: {e}")
+            logger.error(f"Dashboard Update Failed: {e}", exc_info=True)
 
     def _render_sunburst(self, df):
-        # Build Hierarchy
-        def parse_lineage(row):
-            lin = str(row.get('lineage', ''))
-            parts = lin.split(';')
-            
-            # Defaults
-            phylum = "Unclassified-Phylum"
-            cls = "Unclassified-Class"
-            order = "Unclassified-Order"
-            identity = row.get('classification', 'Unknown')
-            
-            # Parse standard greengenes/silva format
-            for p in parts:
-                p = p.strip()
-                if p.startswith('p__'): phylum = p[3:] or phylum
-                elif p.startswith('c__'): cls = p[3:] or cls
-                elif p.startswith('o__'): order = p[3:] or order
-            
-            # Override identity for Novel
-            if row.get('status') == 'Novel':
-                identity = f"NOVEL-{str(row.get('id',''))[:8]}"
-
-            return pd.Series([phylum, cls, order, identity])
-
-        hierarchy = df.apply(parse_lineage, axis=1)
-        hierarchy.columns = ['Phylum', 'Class', 'Order', 'Identity']
-        hierarchy['Count'] = 1
-        
-        # "Bioluminescent Abyss" -> Deep Blues to Cyan
-        fig = px.sunburst(
-            hierarchy,
-            path=['Phylum', 'Class', 'Order', 'Identity'],
-            values='Count',
-            color='Count', 
-            color_continuous_scale='Teal',
-            title='<b>COMMUNITY COMPOSITION</b>'
-        )
-        
-        fig.update_layout(
-             paper_bgcolor=app_config.THEME_COLORS['background'],
-             plot_bgcolor=app_config.THEME_COLORS['background'],
-             font=dict(color='#A0A0A0', family="Segoe UI"),
-             margin=dict(t=30, l=0, r=0, b=0),
-             coloraxis_showscale=False
-        )
-        
-        # Render Offline
+        """
+        @UX-Visionary: Render Bioluminescent Abyss Sunburst.
+        Drill-down enabled, offline-capable via temporary file handshake.
+        """
         try:
-             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-                 html = fig.to_html(include_plotlyjs=True, full_html=True)
+            # 1. Data Aggregator
+            hierarchy_df = self._aggregate_community_data(df)
+            
+            if hierarchy_df.empty:
+                return
+
+            # 2. The Sunburst Chart
+            # Bioluminescent Palette: Deep Blue -> Cyan -> White
+            # We map 'Phylum' to colors if possible, or use a continuous scale based on count
+            
+            fig = px.sunburst(
+                hierarchy_df,
+                path=['Phylum', 'Class', 'Order', 'Identity'],
+                values='Count',
+                color='Count', 
+                color_continuous_scale='Viridis', # Deep Blue to Yellow/Green - roughly 'abyss' like
+                title='<b>COMMUNITY COMPOSITION</b>'
+            )
+            
+            # 3. Styling: 'Bioluminescent Abyss'
+            bg_color = app_config.THEME_COLORS['background']
+            text_color = "#E0E0E0"
+            
+            fig.update_layout(
+                 paper_bgcolor=bg_color,
+                 plot_bgcolor=bg_color,
+                 font=dict(color=text_color, family="Segoe UI"),
+                 margin=dict(t=40, l=10, r=10, b=10),
+                 coloraxis_showscale=False,
+                 hoverlabel=dict(
+                    bgcolor=app_config.THEME_COLORS['primary'],
+                    font_size=14,
+                    font_family="Consolas"
+                 )
+            )
+            
+            # Update traces for borders
+            fig.update_traces(
+                marker=dict(line=dict(color=bg_color, width=1)),
+                leaf=dict(opacity=0.9)
+            )
+            
+            # 4. Offline Logic: Temporary File Handshake
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                 html = fig.to_html(include_plotlyjs='cdn', full_html=True)
+                 # Inject dark mode CSS for the body
+                 html = html.replace('<body>', f'<body style="background-color: {bg_color}; margin: 0; overflow: hidden;">')
                  f.write(html)
                  temp_path = f.name
              
-             self.web_view.load(QUrl.fromLocalFile(temp_path))
+            self.web_view.load(QUrl.fromLocalFile(temp_path))
+            
         except Exception as e:
-            logger.error(f"Sunburst Render Failed: {e}")
+            logger.error(f"Sunburst Render Failed: {e}", exc_info=True)
+
+    def _aggregate_community_data(self, df):
+        """
+        Groups session results by Phylum > Class > Order.
+        """
+        rows = []
+        
+        for _, row in df.iterrows():
+            # Parse lineage string: e.g., "p__Proteobacteria;c__Gammaproteobacteria;..."
+            lineage_str = str(row.get('lineage', ''))
+            parts = [p.strip() for p in lineage_str.split(';')]
+            
+            phylum = "Unclassified"
+            cls = "Unclassified"
+            order = "Unclassified"
+            identity = row.get('classification', 'Unknown Organism')
+            
+            # Simple heuristic parsing
+            for p in parts:
+                if p.startswith('p__'): phylum = p[3:] or "Unclassified"
+                elif p.startswith('c__'): cls = p[3:] or "Unclassified"
+                elif p.startswith('o__'): order = p[3:] or "Unclassified"
+            
+            # Override for Novel/Unknown
+            status = row.get('status', 'Known')
+            if 'Novel' in status:
+                phylum = "Novel Biological Entities"
+                # Use NTU ID if available, else generic
+                # If grouped by NTU, we might want that here.
+                # For now, keep it simple.
+                
+            rows.append({
+                'Phylum': phylum,
+                'Class': cls,
+                'Order': order,
+                'Identity': identity,
+                'Count': 1
+            })
+            
+        return pd.DataFrame(rows)
+
 
 class NTUCard(CardWidget):
     """

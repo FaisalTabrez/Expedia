@@ -104,19 +104,29 @@ class DiscoveryEngine:
 
         # C. Topology Generation
         try:
-            # 0. Adaptive Neighbors
+            # 0. Adaptive Initialization & Neighbors Calibration
+            # UMAP Spectral init requires k < N. If N is small, use random init.
+            app_init = 'random' if N < 15 else 'spectral'
             n_neighbors = min(15, N - 1)
             if n_neighbors < 2: n_neighbors = 2
             
-            # Apply to clustered instances
-            # UMAP (10D)
-            self.reducer_cluster.n_neighbors = n_neighbors
+            logger.info(f"Refining Manifold: N={N}, k={n_neighbors}, init={app_init}")
+
+            # Re-initialize reducers with adaptive parameters
+            self.reducer_cluster = umap.UMAP(
+                n_neighbors=n_neighbors,
+                min_dist=0.0,
+                n_components=10,
+                metric='cosine',
+                n_jobs=1,
+                init=app_init,  # Adaptive Initialization
+                random_state=42
+            )
             
             # 1. Clustering Embedding (10D)
             # Ensure X_norm is numeric matrix
             result_10d = self.reducer_cluster.fit_transform(X_norm)
-            embedding_10d = result_10d[0] if isinstance(result_10d, tuple) else result_10d
-            embedding_10d = np.asarray(embedding_10d)
+            embedding_10d = result_10d
             
             # 2. Density Clustering (on 10D)
             labels = self.clusterer.fit_predict(embedding_10d)
@@ -135,11 +145,19 @@ class DiscoveryEngine:
                      embedding_3d = rng.rand(N, 3)
             else:
                 # Standard UMAP (3D)
-                # Update n_neighbors for visual reducer too
-                self.reducer_vis.n_neighbors = n_neighbors
+                # Re-initialize visual reducer
+                self.reducer_vis = umap.UMAP(
+                    n_neighbors=n_neighbors,
+                    min_dist=0.1,
+                    n_components=3,
+                    metric='cosine',
+                    n_jobs=1,
+                    init=app_init, # Adaptive Initialization
+                    random_state=42
+                )
                 
                 result_3d = self.reducer_vis.fit_transform(X_norm)
-                embedding_3d = result_3d[0] if isinstance(result_3d, tuple) else result_3d
+                embedding_3d = result_3d
 
             # 4. Outlier Resilience
             visuals = np.asarray(embedding_3d, dtype=np.float64)
@@ -154,7 +172,7 @@ class DiscoveryEngine:
             }
 
         except Exception as e:
-            logger.error(f"Manifold Projection Failed: {e}")
+            logger.error(f"[DISCOVERY] Manifold Learning aborted: Dataset too small for topological projection. Using raw distance metrics. Error: {e}")
             return {
                 "labels": np.full(N, -1, dtype=np.int32), 
                 "visuals": np.zeros((N, 3), dtype=np.float64), 
