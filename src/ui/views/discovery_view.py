@@ -1,11 +1,28 @@
 import logging
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+import pandas as pd
+import plotly.express as px
+import tempfile
+import math
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
     QLabel, QScrollArea, QFrame, QSizePolicy
 )
+# WebEngine Import with Fallback
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    WEB_ENGINE_AVAILABLE = True
+except ImportError:
+    WEB_ENGINE_AVAILABLE = False
+    class QWebEngineView(QWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            QVBoxLayout(self).addWidget(QLabel("Visualization Unavailable (Missing QtWebEngine)", self))
+        def load(self, url): pass
+        def setHtml(self, html, baseUrl=None): pass
+
 from qfluentwidgets import (
     TitleLabel, SubtitleLabel, CaptionLabel,
     CardWidget, PrimaryPushButton, FluentIcon as FIF,
@@ -15,52 +32,210 @@ from ...config import app_config
 
 logger = logging.getLogger("DeepBioScan.DiscoveryView")
 
-class SessionSummaryPanel(QFrame):
+class SessionSummaryPanel(QWidget):
     """
-    @WinUI-Fluent: Session Summary Panel.
-    Displays aggregate novelty statistics.
+    @Bio-Taxon: Comprehensive Community Analysis.
+    Integrates Sunburst visualization and Ecological KPIs.
+    Replaces legacy summary panel.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(120)  # slightly taller for info
-        self.setStyleSheet(f"background-color: {app_config.THEME_COLORS['background']}; border-bottom: 1px solid #333;")
+        self.setFixedHeight(450) # Compact height
         
-        layout = QHBoxLayout(self)
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 15)
+        main_layout.setSpacing(20)
+        
+        # LEFT COLUMN: KPI Cards & Metrics
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0,0,0,0)
+        left_col.setSpacing(10)
+        
+        # Header
+        left_col.addWidget(SubtitleLabel("ECOLOGICAL METRICS", self))
+        
+        # 1. Species Richness (S)
+        self.card_richness = self._create_kpi_card("SPECIES RICHNESS (S)", "0", FIF.PEOPLE)
+        left_col.addWidget(self.card_richness)
+        
+        # 2. Novelty Ratio
+        self.card_novelty = self._create_kpi_card("NOVELTY RATIO", "0.0%", FIF.QUESTION_MARK)
+        left_col.addWidget(self.card_novelty)
+        
+        # 3. Shannon Index
+        self.card_diversity = self._create_kpi_card("SHANNON INDEX (H')", "0.00", FIF.IOT)
+        left_col.addWidget(self.card_diversity)
+        
+        left_col.addStretch()
+        
+        container_left = QWidget()
+        container_left.setLayout(left_col)
+        container_left.setFixedWidth(280) 
+        main_layout.addWidget(container_left)
+        
+        # RIGHT COLUMN: Sunburst Chart
+        self.chart_container = QFrame()
+        self.chart_container.setStyleSheet(f"background-color: {app_config.THEME_COLORS['background']}; border: 1px solid #333; border-radius: 8px;")
+        chart_layout = QVBoxLayout(self.chart_container)
+        chart_layout.setContentsMargins(0,0,0,0)
+        
+        if WEB_ENGINE_AVAILABLE:
+            self.web_view = QWebEngineView(self)
+            self.web_view.setStyleSheet("background-color: transparent;")
+            chart_layout.addWidget(self.web_view)
+        else:
+            lbl = SubtitleLabel("Visualization Unavailable (QtWebEngine Missing)", self)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            chart_layout.addWidget(lbl)
+            
+        main_layout.addWidget(self.chart_container)
+
+    def _create_kpi_card(self, title, value, icon):
+        card = CardWidget(self)
+        card.setFixedHeight(90)
+        
+        layout = QHBoxLayout(card)
         layout.setContentsMargins(20, 10, 20, 10)
         
-        # Title
-        title_layout = QVBoxLayout()
-        title_layout.addWidget(TitleLabel("NOVELTY DISCOVERY", self))
-        title_layout.addWidget(CaptionLabel("EXPEDITION ANALYSIS", self))
-        layout.addLayout(title_layout)
+        # Icon
+        icon_widget = getattr(icon, 'icon', lambda c: icon)(color=QColor(app_config.THEME_COLORS['primary']))
+        if hasattr(icon, 'icon'): 
+             icon_widget = icon.icon(color=QColor(app_config.THEME_COLORS['primary']))
         
-        layout.addStretch()
+        icon_lbl = QLabel()
+        if hasattr(icon_widget, 'pixmap'):
+             icon_lbl.setPixmap(icon_widget.pixmap(32, 32))
+        else:
+             icon_lbl.setText("M")
+             
+        layout.addWidget(icon_lbl)
+        layout.addSpacing(15)
         
-        # Stats
-        self.total_processed_label = self._create_stat("PROCESSED", "0")
-        layout.addLayout(self.total_processed_label[0])
+        # Text
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
         
-        self.ntus_found_label = self._create_stat("NTUS IDENTIFIED", "0", color=app_config.THEME_COLORS['accent'])
-        layout.addLayout(self.ntus_found_label[0])
+        title_lbl = CaptionLabel(title, card)
+        title_lbl.setStyleSheet("color: #888;")
         
-        self.novelty_rate_label = self._create_stat("NOVELTY RATE", "0.0%", color=app_config.THEME_COLORS['accent'])
-        layout.addLayout(self.novelty_rate_label[0])
-
-    def _create_stat(self, title, value, color="#FFFFFF"):
-        container = QVBoxLayout()
-        container.setSpacing(2)
-        t_lbl = CaptionLabel(title, self)
-        t_lbl.setStyleSheet("color: #888; font-family: 'Consolas'; font-size: 10px;")
-        v_lbl = TitleLabel(value, self)
-        v_lbl.setStyleSheet(f"color: {color}; font-family: 'Consolas'; font-size: 24px;")
-        container.addWidget(t_lbl)
-        container.addWidget(v_lbl)
-        return container, v_lbl
+        val_lbl = TitleLabel(value, card)
+        val_lbl.setStyleSheet(f"font-size: 22px; color: {app_config.THEME_COLORS['foreground']}; font-weight: bold;")
+        
+        text_layout.addWidget(title_lbl)
+        text_layout.addWidget(val_lbl)
+        layout.addLayout(text_layout)
+        
+        # Store ref
+        card.value_label = val_lbl
+        return card
 
     def update_stats(self, processed, ntus, rate):
-        self.total_processed_label[1].setText(str(processed))
-        self.ntus_found_label[1].setText(str(ntus))
-        self.novelty_rate_label[1].setText(f"{rate:.1f}%")
+        # Legacy adapter
+        pass
+
+    def update_dashboard(self, results):
+        """
+        Calculates ecological metrics and renders Sunburst.
+        """
+        if not results: return
+        
+        try:
+            # 1. Convert to DataFrame
+            df = pd.DataFrame(results)
+            
+            # --- METRICS ---
+            total = len(df)
+            
+            # S: Unique Classifications
+            if 'classification' in df.columns:
+                valid_taxa = df[df['classification'] != 'Unknown']['classification']
+                S = valid_taxa.nunique()
+                
+                # H': Shannon Entropy
+                counts = valid_taxa.value_counts()
+                props = counts / total
+                H = -np.sum(props * np.log(props + 1e-9))
+            else:
+                S = 0
+                H = 0.0
+
+            # Novelty Ratio
+            if 'status' in df.columns:
+                novel = len(df[df['status'] == 'Novel'])
+                ratio = (novel / total * 100) if total > 0 else 0.0
+            else:
+                novel = 0
+                ratio = 0.0
+            
+            # Update UI
+            self.card_richness.value_label.setText(str(S))
+            self.card_novelty.value_label.setText(f"{ratio:.1f}%")
+            self.card_diversity.value_label.setText(f"{H:.2f}")
+
+            # --- VISUALIZATION (Sunburst) ---
+            if WEB_ENGINE_AVAILABLE:
+                self._render_sunburst(df)
+
+        except Exception as e:
+            logger.error(f"Dashboard Update Failed: {e}")
+
+    def _render_sunburst(self, df):
+        # Build Hierarchy
+        def parse_lineage(row):
+            lin = str(row.get('lineage', ''))
+            parts = lin.split(';')
+            
+            # Defaults
+            phylum = "Unclassified-Phylum"
+            cls = "Unclassified-Class"
+            order = "Unclassified-Order"
+            identity = row.get('classification', 'Unknown')
+            
+            # Parse standard greengenes/silva format
+            for p in parts:
+                p = p.strip()
+                if p.startswith('p__'): phylum = p[3:] or phylum
+                elif p.startswith('c__'): cls = p[3:] or cls
+                elif p.startswith('o__'): order = p[3:] or order
+            
+            # Override identity for Novel
+            if row.get('status') == 'Novel':
+                identity = f"NOVEL-{str(row.get('id',''))[:8]}"
+
+            return pd.Series([phylum, cls, order, identity])
+
+        hierarchy = df.apply(parse_lineage, axis=1)
+        hierarchy.columns = ['Phylum', 'Class', 'Order', 'Identity']
+        hierarchy['Count'] = 1
+        
+        # "Bioluminescent Abyss" -> Deep Blues to Cyan
+        fig = px.sunburst(
+            hierarchy,
+            path=['Phylum', 'Class', 'Order', 'Identity'],
+            values='Count',
+            color='Count', 
+            color_continuous_scale='Teal',
+            title='<b>COMMUNITY COMPOSITION</b>'
+        )
+        
+        fig.update_layout(
+             paper_bgcolor=app_config.THEME_COLORS['background'],
+             plot_bgcolor=app_config.THEME_COLORS['background'],
+             font=dict(color='#A0A0A0', family="Segoe UI"),
+             margin=dict(t=30, l=0, r=0, b=0),
+             coloraxis_showscale=False
+        )
+        
+        # Render Offline
+        try:
+             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                 html = fig.to_html(include_plotlyjs=True, full_html=True)
+                 f.write(html)
+                 temp_path = f.name
+             
+             self.web_view.load(QUrl.fromLocalFile(temp_path))
+        except Exception as e:
+            logger.error(f"Sunburst Render Failed: {e}")
 
 class NTUCard(CardWidget):
     """
@@ -200,6 +375,14 @@ class DiscoveryView(QWidget):
         Clears grid and repopulates with NTU cards.
         """
         isolated_taxa = isolated_taxa or []
+        
+        # Update Community Dashboard (SessionSummaryPanel)
+        try:
+             # isolated_taxa contains the full 'results' list from ScienceKernel
+             if isolated_taxa:
+                 self.summary_panel.update_dashboard(isolated_taxa)
+        except AttributeError:
+             pass # In case panel is missing or methods differ
 
         # Clear existing
         for i in reversed(range(self.grid_layout.count())): 

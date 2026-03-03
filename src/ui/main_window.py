@@ -66,7 +66,7 @@ class MainWindow(FluentWindow):
         self.request_localized_manifold.connect(self.worker.request_localized_topology)
         
         self.worker.progress.connect(self.monitor_interface.update_progress)
-        self.worker.finished.connect(self.on_batch_complete)
+        self.worker.batch_complete.connect(self.on_batch_complete)
         self.worker.error.connect(self.on_worker_error)
         self.worker.sequence_processed.connect(self.on_sequence_processed)
         self.worker.localized_topology_ready.connect(self.on_localized_topology_ready)

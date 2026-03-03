@@ -380,12 +380,23 @@ class ManifoldView(QWidget):
 
         if WEB_ENGINE_AVAILABLE:
             import os
+            import tempfile
             try:
                 # FORCE OFFLINE MODE: Embed Plotly JS (~3MB)
                 # 'cdn' creates external dependency which fails in air-gapped labs
                 logger.info("Generating fully embedded HTML for offline visualization...")
-                html = fig.to_html(include_plotlyjs=True, full_html=True)
-                self.web_view.setHtml(html, baseUrl=QUrl.fromLocalFile(os.getcwd()))
+                
+                # Use temp file to avoid IPC size limits on setHtml
+                # and ensure reliable rendering of large JS payloads
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                    html_content = fig.to_html(include_plotlyjs=True, full_html=True)
+                    f.write(html_content)
+                    temp_path = f.name
+                
+                logger.info(f"Loading Manifold from temp file: {temp_path}")
+                self.web_view.load(QUrl.fromLocalFile(temp_path))
+                
+                # self.web_view.setHtml(html, baseUrl=QUrl.fromLocalFile(os.getcwd()))
             except Exception as e:
                 logger.error(f"HTML render failed: {e}")
                 self.show_empty_state()
