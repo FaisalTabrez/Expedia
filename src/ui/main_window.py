@@ -20,6 +20,8 @@ from .views.manifold_view import ManifoldView
 from .views.discovery_view import DiscoveryView
 from .views.manual_view import ManualView
 from .views.benchmarking_view import BenchmarkingView
+from ..core.reporting import DiscoveryReporter
+from PySide6.QtWidgets import QPushButton
 
 class MainWindow(FluentWindow):
     """
@@ -34,7 +36,7 @@ class MainWindow(FluentWindow):
         super().__init__()
         
         # Window Setup
-        self.setWindowTitle("EXPEDIA")
+        self.setWindowTitle("EXPEDIA: DEEP BIOSCAN PRO")
         self.resize(1280, 800)
         
         # Center on screen
@@ -42,24 +44,58 @@ class MainWindow(FluentWindow):
         x = (screen_geometry.width() - self.width()) - 50
         y = (screen_geometry.height() - self.height()) // 2
         self.move(x, y)
+        
+        # State Data
+        self.current_ntus = []
+        self.current_isolated = []
+
+        # Initialize User Interfaces
+        self.monitor_interface = MonitorView(self)
+        self.manifold_interface = ManifoldView(self)
+        self.benchmarking_interface = BenchmarkingView(self) 
+        self.discovery_interface = DiscoveryView(self)
+        self.manual_interface = ManualView(self) 
 
         # Worker Thread Setup
         self.worker_thread = QThread()
         self.worker = DiscoveryWorker()
-        # Connect Inference Request Signal to Worker Slot
+        self.worker.moveToThread(self.worker_thread)
+        
+        # Connect Signals
         self.request_inference.connect(self.worker.run_inference)
         self.request_localized_manifold.connect(self.worker.request_localized_topology)
         
-        self.worker.moveToThread(self.worker_thread)
-        
-        # Initialize User Interfaces
-        self.monitor_interface = MonitorView(self)
-        self.manifold_interface = ManifoldView(self)
-        self.benchmarking_interface = BenchmarkingView(self) # Replaces Placeholder
-        self.discovery_interface = DiscoveryView(self)
-        self.manual_interface = ManualView(self) # Replaces Placeholder
+        self.worker.progress.connect(self.monitor_interface.update_progress)
+        self.worker.finished.connect(self.on_batch_complete)
+        self.worker.error.connect(self.on_worker_error)
+        self.worker.sequence_processed.connect(self.on_sequence_processed)
+        self.worker.localized_topology_ready.connect(self.on_localized_topology_ready)
 
         # Initialize Navigation
+        self.init_navigation()
+        
+        # Status Bar Action
+        self.btn_export = QPushButton("EXPORT EXPEDITION DATA")
+        self.btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_export.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {app_config.THEME_COLORS['accent']};
+                color: {app_config.THEME_COLORS['text_primary']};
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-family: 'Segoe UI'; 
+                font-weight: 600;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: #00C2D6;
+            }}
+        """)
+        self.btn_export.clicked.connect(self.on_export_action)
+        self.statusBar().addWidget(self.btn_export) # Use addWidget for left align or addPermanent for right
+        self.statusBar().addPermanentWidget(QLabel("  ")) # Spacer
+
         self.init_navigation()
         self.init_signals()
         self.init_system()
@@ -280,25 +316,31 @@ class MainWindow(FluentWindow):
         """
         self.monitor_interface.log_message(f"System > Batch Complete. {len(results)} sequences processed.")
         self.monitor_interface.progress_bar.hide()
-        self.worker_thread.quit()
-        self.worker_thread.wait()
         
-        # Populate Discovery View
-        # NEW LOGIC: If no clusters, collect isolated Novel Taxa
-        isolated_taxa = []
+        # Store State
+        self.current_ntus = ntu_clusters
+        self.current_isolated = []
+        
+        # Determine Isolated Taxa if no clusters
         if not ntu_clusters:
-            isolated_taxa = [r for r in results if r.get("status") == "Novel"]
-            
-            if isolated_taxa:
-                 self.monitor_interface.log_message(f"Discovery > No clusters. Found {len(isolated_taxa)} isolated NRTs.")
+            self.current_isolated = [r for r in results if r.get("status") == "Novel"]
+            if self.current_isolated:
+                 self.monitor_interface.log_message(f"Discovery > No clusters. Found {len(self.current_isolated)} isolated NRTs.")
 
-        self.discovery_interface.populate_ntus(ntu_clusters, isolated_taxa)
+        # Update Discovery View
+        self.discovery_interface.populate_ntus(self.current_ntus, self.current_isolated)
         
         # Notify
         from qfluentwidgets import InfoBar, InfoBarPosition
+        title = 'Expedition Scan Complete'
+        msg = f'{len(ntu_clusters)} Novel Units Found.'
+        if not ntu_clusters and self.current_isolated:
+             title = 'Analysis Complete (High Entropy)'
+             msg = f'{len(self.current_isolated)} Isolated Taxa Identified.'
+             
         InfoBar.success(
-            title='Expedition Scan Complete',
-            content=f'{len(ntu_clusters)} Novel Units Found.',
+            title=title,
+            content=msg,
             orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP_RIGHT,
@@ -306,42 +348,92 @@ class MainWindow(FluentWindow):
             parent=self
         )
 
-    def export_discovery_manifest(self):
-        """Export current discovery data to CSV."""
-        from PySide6.QtWidgets import QFileDialog
-        
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "EXPORT DISCOVERY MANIFEST", 
-            "expedition_manifest.csv", 
-            "CSV Files (*.csv)"
-        )
-        
-        if not file_path:
+    def on_export_action(self):
+        """Triggers the Discovery Reporter."""
+        if not self.current_ntus and not self.current_isolated:
+            from qfluentwidgets import InfoBar, InfoBarPosition
+            InfoBar.warning(
+                title='Export Cancelled',
+                content='No discovery data available to export.',
+                orient=Qt.Orientation.Horizontal,
+                position=InfoBarPosition.BOTTOM_RIGHT, # Near button
+                duration=3000,
+                parent=self
+            )
             return
 
-        success = self.discovery_interface.export_data(file_path)
-        
-        from qfluentwidgets import InfoBar, InfoBarPosition
-        if success:
-             InfoBar.success(
-                title='Export Successful',
-                content=f'Manifest saved to {file_path}',
+        try:
+            # Generate Manifest
+            # Combine current clusters and isolated taxa for export if needed
+            # For now, just pass clusters as primary artifact
+            export_list = self.current_ntus
+            # If empty but we have isolated, maybe wrap them?
+            # Creating pseudo-ntus for export
+            if not export_list and self.current_isolated:
+                for iso in self.current_isolated:
+                    export_list.append({
+                        "ntu_id": iso.get("id"),
+                        "anchor_taxon": iso.get("classification"),
+                        "lineage": iso.get("lineage"),
+                        "size": 1,
+                        "divergence": 1.0,
+                        "centroid_id": iso.get("id")
+                    })
+
+            zip_path = DiscoveryReporter.save_discovery_manifest(export_list)
+            
+            from qfluentwidgets import InfoBar, InfoBarPosition
+            InfoBar.success(
+                title='EXPEDIA DATA EXPORTED',
+                content=f'Archive created: {zip_path}',
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
-                position=InfoBarPosition.TOP_RIGHT,
-                duration=3000,
+                position=InfoBarPosition.BOTTOM_RIGHT,
+                duration=5000,
                 parent=self
             )
-        else:
-             InfoBar.error(
+        except Exception as e:
+            from qfluentwidgets import InfoBar, InfoBarPosition
+            InfoBar.error(
                 title='Export Failed',
-                content='Could not write manifest file.',
+                content=str(e),
                 orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP_RIGHT,
-                duration=3000,
+                position=InfoBarPosition.BOTTOM_RIGHT,
+                duration=5000,
                 parent=self
             )
+
+    def on_localized_topology_ready(self, data):
+        """
+        Callback from Worker when neighborhood logic is done.
+        """
+        self.manifold_interface.render_manifold(data)
+
+    def on_view_cluster_topology(self, payload: dict):
+        """
+        Redirects to Manifold View and visualizes the cluster.
+        payload: { "id": str, "vector": np.array, ... }
+        """
+        # Switch to Manifold Interface
+        self.switchTo(self.manifold_interface)
+        
+        vector = payload.get('vector')
+        seq_id = payload.get('id')
+        
+        if vector is not None:
+             self.manifold_interface.show_loading()
+             
+             # Request Topology from Worker
+             if not self.worker_thread.isRunning():
+                 self.worker_thread.start()
+             
+             # Worker expects dict with 'id' and 'vector'
+             worker_payload = {
+                 "id": seq_id,
+                 "vector": vector
+             }
+             self.request_localized_manifold.emit(worker_payload)
+
 
     def on_worker_error(self, err_msg):
         self.monitor_interface.log_message(f"ERROR > {err_msg}")

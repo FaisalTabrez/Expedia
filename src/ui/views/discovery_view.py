@@ -110,14 +110,15 @@ class NTUCard(CardWidget):
         pop_val.setStyleSheet("font-size: 18px;")
         metrics_layout.addWidget(pop_val, 1, 0)
         
-        # GENOMIC VARIANCE
+        # GENOMIC DIVERGENCE
         divergence = float(ntu_data.get("divergence", 0.0))
-        metrics_layout.addWidget(CaptionLabel("GENOMIC VARIANCE", self), 0, 1)
-        div_val = TitleLabel(f"{divergence:.4f}", self) # Variance is usually small (e.g. 0.05)
+        metrics_layout.addWidget(CaptionLabel("DIVERGENCE", self), 0, 1)
+        # Convert variance to Percentage Divergence (0.05 -> 5.0%)
+        div_val = TitleLabel(f"{divergence*100:.1f}%", self) 
         # Color code variance
         var_color = "#00FF00" # Green (Tight)
-        if divergence > 0.5: var_color = app_config.THEME_COLORS['accent'] # Yellow/Cyan
-        if divergence > 1.0: var_color = "#FF4444" # Red (Loose)
+        if divergence > 0.1: var_color = app_config.THEME_COLORS['accent'] # Yellow/Cyan
+        if divergence > 0.25: var_color = "#FF4444" # Red (Loose)
         
         div_val.setStyleSheet(f"font-size: 18px; color: {var_color};")
         metrics_layout.addWidget(div_val, 1, 1)
@@ -127,8 +128,12 @@ class NTUCard(CardWidget):
         layout.addStretch()
         
         # 4. Action Button
-        self.btn_explore = PrimaryPushButton(FIF.GLOBE, "EXPLORE NTU TOPOLOGY", self)
-        if ntu_data.get("centroid_vector") is None:
+        self.btn_explore = PrimaryPushButton(FIF.GLOBE, "VIEW TOPOLOGY", self)
+        
+        # Check for vector availability
+        self.centroid_vector = ntu_data.get("centroid_vector")
+        
+        if self.centroid_vector is None:
              self.btn_explore.setText("VECTOR UNAVAILABLE")
              self.btn_explore.setEnabled(False)
              
@@ -137,16 +142,11 @@ class NTUCard(CardWidget):
 
     def _on_explore(self):
         """Prepare data payload for Manifold View."""
-        # We need to construct a payload that render_manifold understands
-        # { "query": { "coords": [...], "label": ... }, "neighbors": [...] }
-        # Since we don't have neighbors here, we trigger the async fetch.
-        # Signal carries: ID, Vector, and context.
-        
+        # Payload for Localized Manifold View
         payload = {
-            "type": "ntu_inspection",
-            "id": self.ntu_data.get("centroid_id"), # Holotype ID
-            "vector": self.ntu_data.get("centroid_vector"), # Holotype Vector
-            "ntu_id": self.ntu_data.get("ntu_id")
+            "id": self.ntu_data.get("centroid_id") or self.ntu_data.get("ntu_id"),
+            "vector": self.ntu_data.get("centroid_vector"), 
+            "context": "ntu_exploration"
         }
         self.view_manifold_signal.emit(payload)
 
@@ -217,17 +217,17 @@ class DiscoveryView(QWidget):
             for taxon in isolated_taxa:
                 display_list.append({
                     "ntu_id": taxon.get("id", "UNKNOWN"),
-                    "anchor_taxon": taxon.get("classification", "Unknown"),
-                    "lineage": taxon.get("lineage", ""),
+                    "anchor_taxon": taxon.get("classification", "Isolated Taxon"),
+                    "lineage": taxon.get("lineage", "No Consensus"),
                     "size": 1,
-                    "divergence": 1.0, # High Divergence
-                    "centroid": None   # No Vector
+                    "divergence": 1.0, 
+                    "centroid_vector": taxon.get('vector') # Pass vector if available
                 })
             
             # Show InfoBar Warning
             InfoBar.warning(
                 title="NO STABLE BIOLOGICAL CLUSTERS FOUND",
-                content=f"DISPLAYING {len(isolated_taxa)} ISOLATED DARK TAXA.",
+                content=f"NO DENSE CLUSTERS DETECTED. ANALYZING {len(isolated_taxa)} ISOLATED NON-REFERENCE TAXA",
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP_RIGHT,

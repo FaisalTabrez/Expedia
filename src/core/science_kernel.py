@@ -82,8 +82,9 @@ try:
     safe_ipc_write(json.dumps({"type": "log", "message": "Importing Discovery..."}) + "\n")
     from src.core.discovery import DiscoveryEngine
     
-    safe_ipc_write(json.dumps({"type": "log", "message": "Importing Sklearn..."}) + "\n")
-    from sklearn.decomposition import PCA
+    # PCA Removed (Avalanche Standard uses UMAP)
+    # safe_ipc_write(json.dumps({"type": "log", "message": "Importing Sklearn..."}) + "\n")
+    # from sklearn.decomposition import PCA
 
     safe_ipc_write(json.dumps({"type": "log", "message": "Imports Complete."}) + "\n")
 
@@ -245,8 +246,7 @@ class ScienceKernel:
             
     def _aggregate_ntus(self, nrt_vectors, nrt_ids, nrt_meta):
         """
-        @Bio-Taxon: Satellite Cluster Aggregation.
-        Groups NRTs by shared topology (Density/Neighbor-Overlap).
+        @BioArch-Pro: Avalanche eDNA Standard (UMAP -> HDBSCAN).
         """
         if not self.discovery:
             logger.warning("Discovery Engine missing.")
@@ -255,18 +255,18 @@ class ScienceKernel:
         try:
             # 1. Coordinate Extraction
             X = np.vstack(nrt_vectors).astype(np.float32)
-            n_samples = X.shape[0]
             
-            # Constraint: Need minimal samples for HDBSCAN density (min_cluster_size=5)
-            if n_samples < 2:
-                logger.info("Insufficient NRTs for stable clustering. Returning as Isolated Taxa.")
+            # 2. Avalanche Pipeline Execution
+            # L2 Norm -> UMAP (10D) -> HDBSCAN -> Labels -> UMAP (3D)
+            pipeline_result = self.discovery.cluster_nrt_batch(X, nrt_ids, nrt_meta)
+            
+            if not pipeline_result.get("success"):
+                logger.info("Pipeline returned isolated state.")
                 self._emit_discovery_result([], nrt_meta)
                 return
 
-            # 2. Clustering (Approximating "80% Shared Neighbors" via Density)
-            # HDBSCAN parameters tuned for "Micro-Clusters"
-            # min_samples=3 allows for small but tight groups
-            labels = self.discovery.clusterer.fit_predict(X)
+            labels = pipeline_result['labels']
+            visuals = pipeline_result['visuals'] # 3D Coords for future visualization (not used in aggregation payload yet but available)
             
             # 3. Aggregation
             unique_labels = set(labels)
@@ -283,14 +283,14 @@ class ScienceKernel:
 
                 # Cluster Members
                 indices = np.where(labels == label)[0]
-                cluster_vectors = X[indices]
+                cluster_vectors = X[indices] # ORIGINAL 768D VECTORS for Centroid
                 cluster_ids = [nrt_ids[i] for i in indices]
                 cluster_meta = [nrt_meta[i] for i in indices]
                 
-                # A. Centroid & Holotype
+                # A. Centroid (768D) & Holotype
                 centroid = np.mean(cluster_vectors, axis=0)
                 
-                # Find closest to centroid (Euclidean)
+                # Find closest to centroid (Euclidean in 768D space)
                 distances = np.linalg.norm(cluster_vectors - centroid, axis=1)
                 holotype_idx = np.argmin(distances)
                 holotype_id = cluster_ids[holotype_idx]
@@ -300,9 +300,6 @@ class ScienceKernel:
                 variance = np.mean(distances)
                 
                 # C. Consensus Anchor
-                # "Group sequences that share Top Neighbors..."
-                # We use the classification from the initial scan (which is based on neighbors)
-                # to find the "Anchor"
                 anchors = [m.get('classification', 'Unknown') for m in cluster_meta]
                 common_anchor = Counter(anchors).most_common(1)[0][0]
                 
@@ -311,10 +308,7 @@ class ScienceKernel:
                 common_lineage = Counter(lineages).most_common(1)[0][0]
 
                 # D. ID Generation
-                # EXPEDIA-NTU-{Year}-{ClusterHash or Incremental}
-                # Using simple incremental based on current time/batch for demo
-                # Ideally check DB for existing NTUs
-                ntu_id = f"EXPEDIA-NTU-2026-{int(time.time())}-{label}"
+                ntu_id = f"EXPEDIA-NTU-{int(time.time())}-{label}"
                 
                 ntus.append({
                     "ntu_id": ntu_id,
@@ -324,7 +318,8 @@ class ScienceKernel:
                     "divergence": float(variance),
                     "centroid_id": holotype_id,
                     "centroid_vector": holotype_vector.tolist(), # Serialize
-                    "members": cluster_ids
+                    "members": cluster_ids,
+                    "cluster_label": int(label) # Avalanche Standard: Explicit Label
                 })
 
             # 4. Emit
@@ -395,50 +390,51 @@ class ScienceKernel:
             # Metadata sync
             neighbor_meta = df_neighbors[['id', 'classification', 'lineage']].to_dict(orient='records')
             
-            # 3. Localized Discovery (HDBSCAN on 501 points)
+            # 3. Localized Discovery (Avalanche Standard: UMAP -> HDBSCAN)
             # Using existing discovery engine instance
-            if self.discovery and self.discovery.clusterer:
-                 # Standardize IDs for clustering context
-                 all_ids = ["QUERY"] + [m['id'] for m in neighbor_meta]
+            ids_for_clustering = ["QUERY"] + [m['id'] for m in neighbor_meta]
+            
+            # Default fallbacks
+            labels = np.full(len(all_vectors), -1)
+            coords_3d = np.zeros((len(all_vectors), 3))
+            query_label = -1
+            consensus_summary = "Outlier"
+
+            if self.discovery:
+                 # RUN PIPELINE (L2 -> UMAP 10D -> HDBSCAN -> UMAP 3D)
+                 # Treat the query + 500 neighbors as a "batch" for manifold learning
+                 analysis = self.discovery.cluster_nrt_batch(all_vectors, ids_for_clustering)
                  
-                 # Fit HDBSCAN
-                 # We re-run fit_predict on this small subset
-                 labels = self.discovery.clusterer.fit_predict(all_vectors)
-                 
-                 # Analyze Cluster containing Query (Index 0)
-                 query_label = labels[0]
-                 
-                 consensus_summary = "Outlier"
-                 hull_points = []
-                 
-                 if query_label != -1:
-                     # Filter points in same cluster
-                     cluster_indices = np.where(labels == query_label)[0]
-                     # Get their metadata (offset by -1 for neighbors)
-                     cluster_meta = []
-                     for idx in cluster_indices:
-                         if idx == 0: continue
-                         cluster_meta.append(neighbor_meta[idx-1])
-                         
-                     # Calculate Consensus
-                     if cluster_meta:
-                         taxa = [m.get('classification', 'Unknown') for m in cluster_meta]
-                         common = Counter(taxa).most_common(1)
-                         if common:
-                             consensus_name, count = common[0]
-                             pct = (count / len(cluster_meta)) * 100
-                             consensus_summary = f"{consensus_name} ({pct:.1f}%)"
+                 if analysis.get('success'):
+                     labels = analysis['labels']
+                     coords_3d = analysis['visuals'] # 3D UMAP Coords
+                     
+                     # Analyze Cluster containing Query (Index 0)
+                     query_label = labels[0]
+                     
+                     if query_label != -1:
+                         # Filter points in same cluster
+                         cluster_indices = np.where(labels == query_label)[0]
+                         # Get their metadata (offset by -1 for neighbors)
+                         cluster_meta = []
+                         for idx in cluster_indices:
+                             if idx == 0: continue
+                             cluster_meta.append(neighbor_meta[idx-1])
+                             
+                         # Calculate Consensus
+                         if cluster_meta:
+                             taxa = [m.get('classification', 'Unknown') for m in cluster_meta]
+                             common = Counter(taxa).most_common(1)
+                             if common:
+                                 consensus_name, count = common[0]
+                                 pct = (count / len(cluster_meta)) * 100
+                                 consensus_summary = f"{consensus_name} ({pct:.1f}%)"
             else:
-                 query_label = -1
                  consensus_summary = "Discovery Engine Offline"
 
-            # 4. Localized PCA (3D)
-            pca = PCA(n_components=3)
-            principal_components = pca.fit_transform(all_vectors)
-            
-            # Split
-            query_pc = principal_components[0].tolist()
-            neighbors_pc = principal_components[1:].tolist()
+            # 4. Serialize Coordinates (Already 3D from UMAP)
+            query_pc = coords_3d[0].tolist()
+            neighbors_pc = coords_3d[1:].tolist()
             
             # 5. Serialize
             response = {
@@ -575,46 +571,92 @@ class ScienceKernel:
             if len(nrt_vectors) == 0:
                  # Should fail fast but handled just in case
                  if sys.__stdout__:
-                    sys.__stdout__.write(json.dumps({
+                    response_payload = {
                         "type": "discovery_results",
                         "data": [],
                         "status": "no_clusters_found"
-                    }) + "\n")
+                    }
+                    sys.__stdout__.write(json.dumps(response_payload) + "\n")
                     sys.__stdout__.flush()
                  return
             
             vectors_array = np.vstack(nrt_vectors)
             
-            # Cluster (pass metadata if available)
-            # cluster_nrt_batch returns a DataFrame
-            clusters_df = self.discovery.cluster_nrt_batch(vectors_array, nrt_ids, nrt_meta) # type: ignore
+            # Cluster
+            # The new Discovery API returns a dict, not a DataFrame
+            # {'labels': ..., 'visuals': ..., 'norm_vectors': ..., 'success': bool}
+            analysis = self.discovery.cluster_nrt_batch(vectors_array, nrt_ids, nrt_meta) # type: ignore
             
-            clean_data = [] 
+            success = analysis.get("success", False)
+            if not success:
+                if sys.__stdout__:
+                    sys.__stdout__.write(json.dumps({
+                        "type": "discovery_results",
+                        "data": [],
+                        "status": "clustering_failed"
+                    }) + "\n")
+                    sys.__stdout__.flush()
+                return
+
+            labels = analysis['labels']
+            visuals = analysis['visuals']
             
-            if not clusters_df.empty:
-                # Convert to dict for JSON
-                raw_data = clusters_df.to_dict(orient="records")
+            # Convert to results list for JSON dump
+            # Group by label
+            unique_labels = set(labels)
+            results = []
+            
+            for label in unique_labels:
+                if label == -1: continue
+                indices = np.where(labels == label)[0]
                 
-                # ---------------------------------------------------------------------
-                # IPC HYGIENE: Robust Serialization
-                # ---------------------------------------------------------------------
-                # Use recursive converter to ensure ALL numpy types are gone
-                clean_data = _make_json_serializable(raw_data)
+                # Metadata
+                cluster_members = [nrt_ids[i] for i in indices]
+                cluster_meta = [nrt_meta[i] for i in indices] if nrt_meta else []
+                cluster_vectors = vectors_array[indices]
 
-            # Check if we actually found anything
-            status_msg = "success" if clean_data else "no_clusters_found"
+                # Consensus
+                anchor = "Unresolved"
+                lineage = ""
+                if cluster_meta:
+                   anchors = [m.get('classification', 'Unknown') for m in cluster_meta]
+                   if anchors: anchor = Counter(anchors).most_common(1)[0][0]
+                   
+                   lineages = [m.get('lineage', '') for m in cluster_meta]
+                   if lineages: lineage = Counter(lineages).most_common(1)[0][0]
+                
+                # Calculate Centroid
+                centroid_vector = np.mean(cluster_vectors, axis=0) # 768D
+                # Find member closest to centroid
+                dists = np.linalg.norm(cluster_vectors - centroid_vector, axis=1)
+                centroid_idx_local = np.argmin(dists)
+                centroid_id = cluster_members[centroid_idx_local]
+                
+                # Divergence (mean distance to centroid)
+                divergence = np.mean(dists)
 
-            # ALWAYS Emit Result (Even if empty, to unblock UI)
-            json_payload = {
-                "type": "discovery_results",
-                "data": clean_data,
-                "status": status_msg
-            }
+                results.append({
+                    "ntu_id": f"EXPEDIA-NTU-{int(time.time())}-{label}",
+                    "size": len(cluster_members),
+                    "anchor_taxon": anchor,
+                    "lineage": lineage,
+                    "member_ids": cluster_members,
+                    "centroid_id": centroid_id,
+                    "centroid_vector": centroid_vector, # Now included for UI Jump
+                    "divergence": float(divergence)
+                })
             
             if sys.__stdout__:
-                sys.__stdout__.write(json.dumps(json_payload) + "\n")
+                sys.__stdout__.write(json.dumps({
+                    "type": "discovery_results",
+                    "data": _make_json_serializable(results),
+                    "status": "success"
+                }) + "\n")
                 sys.__stdout__.flush()
                 
+            # Clean up old redundant code block
+            # (The block that ran cluster_nrt_batch again is removed by this overwrite)
+
         except Exception as e:
             logger.error(f"Discovery phase failed: {e}")
             logger.error(traceback.format_exc())

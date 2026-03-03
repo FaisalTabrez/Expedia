@@ -47,24 +47,22 @@ def test_aggregation_logic():
     # Mock ScienceKernel to avoid full initialization
     kernel = ScienceKernel()
     
-    # Mock DiscoveryEngine (HDBSCAN)
+    # Mock DiscoveryEngine (Avalanche Standard)
     class MockDiscovery:
-        class Clusterer:
-            def fit_predict(self, X):
-                # Returns 2 clusters + noise
-                # First 5 points -> Cluster 0
-                # Next 5 points -> Cluster 1
-                # Last 2 points -> Noise (-1)
-                labels = np.array([0]*5 + [1]*5 + [-1]*2)
-                return labels
-        
-        def __init__(self):
-            self.clusterer = self.Clusterer()
+        def cluster_nrt_batch(self, vectors, ids, meta=None):
+            # Return valid Avalanche structure
+            N = len(vectors)
+            return {
+                "success": True,
+                "labels": np.array([0]*5 + [1]*5 + [-1]*2),
+                "visuals": np.random.rand(12, 3), # 3D UMAP simulation
+                "norm_vectors": vectors
+            }
             
     kernel.discovery = MockDiscovery()
     
     # Create Dummy NRT Vectors
-    # 12 vectors of dimension 10
+    # 12 vectors of dimension 10 (simulating 768)
     nrt_vectors = [np.random.rand(10).astype(np.float32) for _ in range(12)]
     nrt_ids = [f"seq_{i}" for i in range(12)]
     nrt_meta = [
@@ -83,6 +81,8 @@ def test_aggregation_logic():
     except Exception as e:
         sys.__stdout__ = original_stdout
         print(f"FAIL: Aggregation crashed: {e}")
+        import traceback
+        traceback.print_exc()
         return
 
     sys.__stdout__ = original_stdout
@@ -97,6 +97,13 @@ def test_aggregation_logic():
                 isolated = msg.get("isolated_count", 0)
                 print(f"Result: {len(ntus)} NTUs, {isolated} Isolated.")
                 
+                # We expect 2 clusters (label 0, 1) and 2 isolated (label -1)
+                # But check NTU content for explicit label
+                if len(ntus) > 0 and 'cluster_label' in ntus[0]:
+                     print("PASS: Avalanche Schema Verified (cluster_label present).")
+                else:
+                     print("FAIL: Schema missing cluster_label.")
+
                 if len(ntus) == 2 and isolated == 2:
                     print("PASS: Aggregation Logic Verified.")
                 else:

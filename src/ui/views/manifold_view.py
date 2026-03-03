@@ -42,7 +42,8 @@ from qfluentwidgets import (
     SubtitleLabel, ToolButton, FluentIcon as FIF, InfoBar, InfoBarPosition
 )
 import plotly.graph_objects as go
-from sklearn.decomposition import PCA
+# PCA Removed (Avalanche Standard UMAP handled in Kernel)
+# from sklearn.decomposition import PCA
 
 from ...config import app_config
 from ...core.database import AtlasManager
@@ -222,42 +223,48 @@ class ManifoldView(QWidget):
                 
                 text_vals = [f"{n.get('classification', 'Unknown')}<br>{n.get('lineage','')}" for n in neighbors]
                 
+                # Dynamic Coloring based on classification if available, else depth/index
+                # Using 'Viridis' color scale as requested for better contrast
+                colors = np.linspace(0, 1, len(neighbors))
+                
                 fig.add_trace(go.Scatter3d(
                     x=x_vals, y=y_vals, z=z_vals,
                     mode='markers',
                     marker=dict(
                         size=4,
-                        color='#00E5FF', # Cyan base
-                        opacity=0.6,
+                        color=colors,
+                        colorscale='Viridis',
+                        opacity=0.8,
                         line=dict(width=0)
                     ),
                     text=text_vals,
                     name='Neighborhood'
                 ))
 
-            # B. Query Point
+            # B. Query Point / Holotype Reference
             q_coords = query_point.get("coords")
             if not q_coords: return
 
             q_label = query_point.get("label", -1)
-            query_color = '#FF007A' # Neon Pink
-            symbol = 'diamond'
+            # Neon Pink Pulsing Star for Holotype
+            query_color = '#FF007A' 
+            symbol = 'cross' # Star-like
             
             fig.add_trace(go.Scatter3d(
                 x=[q_coords[0]], y=[q_coords[1]], z=[q_coords[2]],
                 mode='markers',
                 marker=dict(
-                    size=14,
+                    size=12,
                     color=query_color,
-                    symbol=symbol,
+                    symbol='diamond-open', # Distinctive Holotype Marker
                     opacity=1.0,
                     line=dict(color='#FFFFFF', width=2)
                 ),
-                text=["QUERY SEQUENCE"],
-                name='Active Sequence'
+                text=["HOLOTYPE REFERENCE (Analysed Seq)"],
+                name='Holotype Reference'
             ))
             
-            # C. Dashed Line
+            # C. Dashed Line (Evolutionary Distance)
             if neighbors:
                 nn = neighbors[0] 
                 nn_coords = nn.get('coords')
@@ -268,24 +275,27 @@ class ManifoldView(QWidget):
                         z=[q_coords[2], nn_coords[2]],
                         mode='lines',
                         line=dict(color='#AAAAAA', width=3, dash='dash'),
-                        name='Evolutionary Distance'
+                        name='Min. Distance Vector'
                     ))
 
-            # D. Cluster Hull
+            # D. Cluster Hull (Bioluminescent Aura)
             if q_label != -1:
                 cluster_points = [n['coords'] for n in neighbors if n.get('label') == q_label and n.get('coords')]
                 if len(cluster_points) > 4:
                      pts = np.array(cluster_points)
+                     # Include the query point in hull
                      pts = np.vstack([pts, q_coords])
                      try:
+                         # AlphaHull=7 for smoother, organic shape
                          fig.add_trace(go.Mesh3d(
                             x=pts[:,0], y=pts[:,1], z=pts[:,2],
-                            opacity=0.1,
+                            opacity=0.2,
                             color='#FF007A',
-                            alphahull=0,
-                            name='Convergent Cluster'
+                            alphahull=7,
+                            name='Bioluminescent Aura'
                          ))
-                     except: pass
+                     except Exception as e: 
+                        logger.warning(f"Hull generation failed: {e}")
             
             # E. Consensus Annotation
             fig.add_annotation(
@@ -321,7 +331,8 @@ class ManifoldView(QWidget):
                 xaxis=dict(showgrid=False, zeroline=False, showbackground=False, visible=False),
                 yaxis=dict(showgrid=False, zeroline=False, showbackground=False, visible=False),
                 zaxis=dict(showgrid=False, zeroline=False, showbackground=False, visible=False),
-                bgcolor=app_config.THEME_COLORS['background']
+                bgcolor=app_config.THEME_COLORS['background'],
+                aspectmode='data' # Scale axes to match data range (prevents squashing)
             ),
             margin=dict(l=0, r=0, t=10, b=0),
             showlegend=True,
