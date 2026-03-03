@@ -287,37 +287,45 @@ class MainWindow(FluentWindow):
     @Slot(list, list)
     def on_batch_complete(self, results: list, ntu_clusters: list):
         """
-        Handle completion.
+        Handle completion signal from ScienceKernel.
+        Validation: Using explicit typed slots to prevent PySide6 recursion method signature errors.
         """
         print(f"DEBUG: on_batch_complete called with {len(results)} results, {len(ntu_clusters)} clusters")
-        msg = f"System > Batch Complete. {len(results)} sequences processed."
-        if ntu_clusters:
-            msg += f" Found {len(ntu_clusters)} clusters."
-        self.monitor_interface.log_message(msg)
-        print(f'UI: Batch complete. Received {len(results)} results and {len(ntu_clusters)} clusters.')
         
+        # 1. Update State
+        self.current_ntus = ntu_clusters
+        self.current_results = results
         self.monitor_interface.progress_bar.hide()
         
-        # Store State
-        self.current_ntus = ntu_clusters
-        self.current_isolated = []
-        
-        # Determine Isolated Taxa if no clusters
-        if not ntu_clusters:
-            # Check safely for Novel status
-            self.current_isolated = [
-                r for r in results 
-                if r.get("status", "Unknown") == "Novel"
-            ]
-            if self.current_isolated:
-                 self.monitor_interface.log_message(f"Discovery > No clusters. Found {len(self.current_isolated)} isolated NRTs.")
-        
-        # Update Discovery View
-        # Passing full results allows the view to filter or display all sequences if needed
+        # 2. Populate Visuals
         self.discovery_interface.populate_ntus(ntu_clusters, results)
         
-        # Notify
+        # 3. Auto-Export Research Brief
+        try:
+             export_path = DiscoveryReporter.save_discovery_manifest(self.current_ntus)
+             print(f"Exported brief to: {export_path}")
+        except Exception as e:
+             print(f"Auto-export failed: {e}")
+             export_path = ""
+
+        # 4. Visual Feedback (InfoBar)
+        # Message: 'EXPEDITION ANALYSIS COMPLETE: [N] NOVEL UNITS ARCHIVED'
+        n_units = len(ntu_clusters)
+        msg_title = "EXPEDITION ANALYSIS COMPLETE"
+        msg_content = f"{n_units} NOVEL UNITS ARCHIVED"
+        if export_path:
+            msg_content += f"\nBrief saved to: {export_path}"
+
         from qfluentwidgets import InfoBar, InfoBarPosition
+        InfoBar.success(
+            title=msg_title,
+            content=msg_content,
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP_RIGHT,
+            duration=5000,
+            parent=self
+        )
         title = 'Expedition Scan Complete'
         msg = f'{len(ntu_clusters)} Novel Units Found.'
         

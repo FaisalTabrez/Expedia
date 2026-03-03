@@ -339,12 +339,23 @@ class ScienceKernel:
                 # D. ID Generation
                 ntu_id = f"EXPEDIA-NTU-{int(time.time())}-{label}"
                 
+                # E. Confidence Metrics
+                if cluster_meta:
+                    confidences = [float(m.get('confidence', 0.0)) for m in cluster_meta]
+                    mean_confidence = float(np.mean(confidences))
+                    holotype_confidence = float(cluster_meta[holotype_idx].get('confidence', 0.0))
+                else:
+                    mean_confidence = 0.0
+                    holotype_confidence = 0.0
+
                 ntus.append({
                     "ntu_id": ntu_id,
                     "anchor_taxon": common_anchor,
                     "lineage": common_lineage,
                     "size": len(indices),
                     "divergence": float(variance),
+                    "mean_confidence": mean_confidence,
+                    "holotype_confidence": holotype_confidence,
                     "centroid_id": holotype_id,
                     "centroid_vector": holotype_vector.tolist(), # Serialize
                     "members": cluster_ids,
@@ -655,7 +666,8 @@ class ScienceKernel:
                     nrt_meta_container.append({
                         "id": seq_id,
                         "classification": analysis.get("classification"),
-                        "lineage": analysis.get("lineage")
+                        "lineage": analysis.get("lineage"),
+                        "confidence": float(analysis.get("confidence", 0.0))
                     })
 
             # Construct Result
