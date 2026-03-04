@@ -28,6 +28,13 @@ except ImportError as e:
             self.v_layout.addWidget(self.label)
             
         def setHtml(self, html, baseUrl=None):
+            pass
+            
+        def load(self, url):
+            pass
+            
+        def setUrl(self, url):
+            pass
             # No-op for HTML, we need setPixmap or similar for static fallback
             pass
             

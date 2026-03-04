@@ -320,7 +320,7 @@ class MainWindow(FluentWindow):
         InfoBar.success(
             title=msg_title,
             content=msg_content,
-            orient=Qt.Horizontal,
+            orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP_RIGHT,
             duration=5000,

@@ -126,7 +126,8 @@ class DiscoveryEngine:
             # 1. Clustering Embedding (10D)
             # Ensure X_norm is numeric matrix
             result_10d = self.reducer_cluster.fit_transform(X_norm)
-            embedding_10d = result_10d
+            embedding_10d = result_10d[0] if isinstance(result_10d, tuple) else result_10d
+            embedding_10d = np.asarray(embedding_10d)
             
             # 2. Density Clustering (on 10D)
             labels = self.clusterer.fit_predict(embedding_10d)
