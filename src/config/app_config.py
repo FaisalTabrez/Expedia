@@ -74,7 +74,6 @@ WORMS_CSV = TAXDATA_DIR / "worms_deepsea_ref.csv"
 
 # AI Model Anchor
 LOCAL_MODEL_PATH = DATA_ROOT / "resources/models/nt_v2_50m"
-MODEL_INTERMEDIATE_SIZE = 4096 # Configuration Patch for v2-50m
 
 # -----------------------------------------------------------------------------
 # DATABASE CONSTANTS

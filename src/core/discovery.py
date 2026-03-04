@@ -1,6 +1,5 @@
 import logging
 import numpy as np
-import pandas as pd
 import hdbscan
 from sklearn.preprocessing import Normalizer
 try:
@@ -14,7 +13,6 @@ except ImportError:
     # Fallback or try different import structure if needed, but standard is 'import umap'
     import umap.umap_ as umap
 
-from collections import Counter
 from ..config import app_config
 
 logger = logging.getLogger("EXPEDIA.Discovery")

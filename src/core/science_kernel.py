@@ -61,9 +61,6 @@ try:
     safe_ipc_write(json.dumps({"type": "log", "message": "Importing Torch..."}) + "\n")
     import torch
 
-    safe_ipc_write(json.dumps({"type": "log", "message": "Importing Scipy..."}) + "\n")
-    import scipy
-
     safe_ipc_write(json.dumps({"type": "log", "message": "Importing Bio..."}) + "\n")
     from Bio import SeqIO
     # Discovery Engines
