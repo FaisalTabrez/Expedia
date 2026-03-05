@@ -115,13 +115,19 @@ class DiscoveryCard(CardWidget):
             self.class_label.setStyleSheet(f"color: {accent_color}; font-weight: bold;")
             
         # Lineage (Taxonomic Context)
-        lineage_raw = result_data.get("lineage", "Unknown Lineage")
-        if isinstance(lineage_raw, list):
-            lineage_raw = " › ".join(lineage_raw)
-        lineage_text = str(lineage_raw).replace(" > ", " › ")
+        # Check for new predicted_lineage object first
+        pred_lineage = result_data.get("predicted_lineage", {})
+        if pred_lineage and "lineage_string" in pred_lineage:
+            lineage_text = pred_lineage["lineage_string"]
+        else:
+            lineage_raw = result_data.get("lineage", "Unknown Lineage")
+            if isinstance(lineage_raw, list):
+                lineage_raw = " › ".join(lineage_raw)
+            lineage_text = str(lineage_raw).replace(" > ", " › ")
         
         self.lineage_label = CaptionLabel(lineage_text, self)
-        self.lineage_label.setStyleSheet("color: #AAA; font-style: italic;")
+        # Updates: Monospace, slightly brighter for readability against dark background
+        self.lineage_label.setStyleSheet("color: #CCC; font-family: 'Consolas', monospace; font-size: 11px;")
         self.lineage_label.setWordWrap(False)
         
         # Action Button

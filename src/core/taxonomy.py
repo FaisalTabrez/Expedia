@@ -39,12 +39,20 @@ class TaxonomyEngine:
                 "classification": "Unknown",
                 "confidence": 0.0,
                 "lineage": "Unknown",
-                "workflow": "Tier 0"
+                "workflow": "Tier 0",
+                "predicted_lineage": {
+                    "status": "NO SIGNAL",
+                    "lineage_string": "Unknown",
+                    "anchor_rank": "None"
+                }
             }
+
+        # Run Prediction Engine (Hierarchical Consensus)
+        prediction = self.predict_lineage(neighbors_df)
 
         # 0. Perfect Match Bypass (Identity Matcher)
         top_hit = neighbors_df.iloc[0]
-        best_dist = float(top_hit.get('_distance', 1.0)) # Ensure float
+        best_dist = float(top_hit.get('_distance', 1.0))
         
         # String Normalization Helper
         def _normalize(s):
@@ -54,11 +62,6 @@ class TaxonomyEngine:
         
         # Check Identity Match (< 5% Divergence)
         if best_dist < 0.05:
-             # Check WoRMS Promotion
-             # If top hit is 'uncultured' but we have a WoRMS match nearby?
-             # Or if the top hit *is* a WoRMS name, prefer it.
-             # Logic: If top_name is valid (not blacklisted) and in WoRMS, auto-accept.
-             
              is_blacklisted = False
              blacklist = ['uncultured', 'unidentified', 'metagenome', 'environmental']
              for b in blacklist:
@@ -68,74 +71,104 @@ class TaxonomyEngine:
              
              # WoRMS Override
              if top_name in self.worms_ref_data:
-                 status = "Known (WoRMS)"
+                 status_str = "Known (WoRMS)"
              elif not is_blacklisted:
-                 status = "Known"
+                 status_str = "Known"
              else:
-                 # It's a close match to "Uncultured bacterium" - still effectively unknown/novel
-                 status = "Ambiguous"
+                 status_str = "Ambiguous"
 
-             if status.startswith("Known"):
+             if status_str.startswith("Known"):
                  return {
                     "status": "Identified",
                     "classification": final_name,
                     "confidence": 1.0 - best_dist,
-                    "lineage": self._build_lineage_string(neighbors_df),
-                    "workflow": "Identity Match (Tier 1)"
+                    "lineage": prediction['lineage_string'],
+                    "workflow": "Identity Match (Tier 1)",
+                    "predicted_lineage": {
+                        "status": "CONFIRMED",
+                        "lineage_string": prediction['lineage_string'],
+                        "anchor_rank": "Species"
+                    }
                 }
 
-        # Flow continues to consensus if not a perfect match...
-        
-        best_sim = 1.0 - best_dist
-
-        # 1. Try Species Consensus First
-        species_cons = self._get_consensus_at_rank(neighbors_df, 'species')
-        
-        # 2. Build Lineage Breadcrumb (from best match or consensus)
-        # We try to build a consensus lineage if possible, otherwise take best match's lineage
-        lineage_str = self._build_lineage_string(neighbors_df)
-
-        if best_sim < app_config.THRESHOLD_NOVEL:
-             # It's a Novel Entity. Try to find highest confident rank.
-             # e.g., "Novel Genus in Family Modiolidae"
-             rank_name = self._resolve_deep_lineage(neighbors_df)
-             
-             return {
-                "status": "Novel",
-                "classification": rank_name,
-                "confidence": best_sim,
-                "lineage": lineage_str,
-                "workflow": "Discovery"
+        # Use the prediction engine's output for non-perfect matches
+        return {
+            "status": prediction['status'],
+            "classification": prediction['classification'],
+            "confidence": prediction['confidence'],
+            "lineage": prediction['lineage_string'],
+            "workflow": "Tier 1 (Consensus)",
+            "predicted_lineage": {
+                "status": prediction['lineage_status'], # CONFIRMED / DIVERGENT / NOVEL
+                "lineage_string": prediction['lineage_string'],
+                "anchor_rank": prediction['anchor_rank']
             }
+        }
 
-        # If we have a solid species match
-        if species_cons['taxon'] != "Unclassified" and species_cons['confidence'] > 0.5:
-             return {
-                "status": "Identified",
-                "classification": species_cons['taxon'],
-                "confidence": species_cons['confidence'],
-                "lineage": lineage_str,
-                "workflow": "Tier 1 (Consensus)"
-            }
+    def predict_lineage(self, df: pd.DataFrame) -> dict:
+        """
+        @Bio-Taxon: Hierarchical Consensus Algorithm.
+        """
+        ranks = ['Kingdom', 'Phylum', 'Class', 'Order', 'Family', 'Genus']
+        consensus_path = []
+        anchor_rank = "None"
+        max_confidence = 0.0
         
-        # Fallback to Genus or Family if species failed but similarity is high
-        # (e.g. distinct species but close to known ones)
-        genus_cons = self._get_consensus_at_rank(neighbors_df, 'genus')
-        if genus_cons['taxon'] != "Unclassified":
-             return {
-                "status": "Ambiguous",
-                "classification": f"Genus {genus_cons['taxon']} (sp. indet)",
-                "confidence": genus_cons['confidence'],
-                "lineage": lineage_str,
-                "workflow": "Tier 1.5 (Genus Level)"
-            }
+        # We need to determine if it's Novel, Divergent, or Confirmed based on consensus
+        lineage_status = "NOVEL" 
+
+        for rank in ranks:
+            # Get consensus for this rank
+            cons = self._get_consensus_at_rank(df, rank.lower())
+            taxon = cons['taxon']
+            conf = cons['confidence']
+            
+            # Formatting logic for UI
+            # If high confidence (>70%), it's a solid node
+            if conf > 0.7:
+                consensus_path.append(taxon)
+                anchor_rank = f"{rank}: {taxon} ({int(conf*100)}%)"
+            elif conf > 0.3:
+                 # Inferred/Probable but not confirmed - wrap in brackets
+                consensus_path.append(f"[{taxon}]")
+            else:
+                # Too uncertain, stop propagation or mark as unknown ??
+                # The user requirement says: "If a rank is inferred via consensus but not confirmed by identity..."
+                # Use cutoff
+                pass
+
+        # Build Lineage String
+        lineage_str = " > ".join(consensus_path) if consensus_path else "Unresolved Lineage"
+        
+        # Determine Classification name from the lowest solid rank
+        # If we have brackets at the end, the classification is likely "Novel [Genus]"
+        last_solid = "Unknown"
+        for p in reversed(consensus_path):
+            if not p.startswith("["):
+                last_solid = p
+                break
+        
+        # Simple heuristic for status
+        # If top hit distance > 0.15 (85% sim) -> Novel
+        # We need the distance here, but strict separation... let's check input df headers
+        top_dist = float(df.iloc[0].get('_distance', 1.0))
+        if top_dist < 0.05:
+            lineage_status = "CONFIRMED"
+            classification = df.iloc[0].get('classification', 'Unknown')
+        elif top_dist < 0.20:
+             lineage_status = "DIVERGENT"
+             classification = f"cf. {last_solid}"
+        else:
+             lineage_status = "NOVEL"
+             classification = f"Novel {last_solid}-like"
 
         return {
-            "status": "Unidentified",
-            "classification": "Unknown",
-            "confidence": 0.0,
-            "lineage": lineage_str,
-            "workflow": "Tier 0"
+            "lineage_string": lineage_str,
+            "anchor_rank": anchor_rank,
+            "lineage_status": lineage_status,
+            "classification": classification,
+            "confidence": 1.0 - top_dist,
+            "status": "Identified" if lineage_status == "CONFIRMED" else "Novel"
         }
 
     def _get_consensus_at_rank(self, df: pd.DataFrame, rank: str) -> dict:
@@ -146,12 +179,13 @@ class TaxonomyEngine:
         BLACKLIST = [
             'unknown', 'incertae sedis', 'nan', 'none', 
             'uncultured', 'environmental sample', 'unidentified', 
-            'metagenome', 'bacterium', 'eukaryote'
+            'metagenome', 'bacterium', 'eukaryote', 'organism'
         ]
         
-        # Weighted Vote
-        # Weight top result double due to vector similarity
         candidates = []
+        
+        # We only look at top 50 (df is usually top 50)
+        # Weighted Vote: Top 1 = 5 votes, Top 2-5 = 3 votes, Rest = 1 vote
         for i, (_, row) in enumerate(df.iterrows()):
              val = str(row.get(rank, '')).strip()
              if not val: continue
@@ -159,14 +193,24 @@ class TaxonomyEngine:
              # Blacklist check
              is_valid = True
              val_lower = val.lower()
+             
+             if len(val) < 3: is_valid = False # Too short
+
              for bad_term in BLACKLIST:
                  if bad_term in val_lower:
                      is_valid = False
                      break
             
              if is_valid:
-                 candidates.append(val)
-                 if i == 0: # Double weight for #1 neighbor
+                 # WoRMS Validation (Tier 2) - Validation Check
+                 # If we had a full oracle, we'd check here. 
+                 # For now, simplistic acceptance.
+                 
+                 weight = 1
+                 if i == 0: weight = 5
+                 elif i < 5: weight = 3
+                 
+                 for _ in range(weight):
                      candidates.append(val)
 
         if not candidates:
@@ -175,6 +219,8 @@ class TaxonomyEngine:
         # Weighted Vote
         counts = Counter(candidates)
         most_common = counts.most_common(1)[0]
+        
+        # Confidence = Votes for Winner / Total Votes
         confidence = most_common[1] / len(candidates)
         
         return {"taxon": most_common[0], "confidence": confidence}

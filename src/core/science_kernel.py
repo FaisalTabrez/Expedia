@@ -552,11 +552,34 @@ class ScienceKernel:
             query_pc = coords_3d[0].tolist()
             neighbors_pc = coords_3d[1:].tolist()
             
+            # Run Lineage Prediction on the Neighborhood
+            # @Neural-Core: Leveraging the neighborhood to predict lineage
+            predicted_lineage_obj = None
+            if self.taxonomy and not df_neighbors.empty:
+                 try:
+                     # Filter out the query from the prediction set if it exists to avoid self-bias?
+                     # predict_lineage expects a dataframe of neighbors.
+                     clean_neighbors = df_neighbors[df_neighbors['id'] != record_id]
+                     if not clean_neighbors.empty:
+                         # Use top 50 for consensus even if we fetched 500 for topology
+                         top_50 = clean_neighbors.head(50)
+                         # Returns the dict we fashioned in taxonomy.py
+                         full_prediction = self.taxonomy.predict_lineage(top_50)
+                         
+                         predicted_lineage_obj = {
+                            "status": full_prediction.get("lineage_status", "UNKNOWN"),
+                            "lineage_string": full_prediction.get("lineage_string", "Unknown"),
+                            "anchor_rank": full_prediction.get("anchor_rank", "None")
+                         }
+                 except Exception as ex:
+                     logger.warning(f"Failed to generate lineage prediction in topology: {ex}")
+
             # 5. Serialize
             response = {
                 "type": "localized_manifold",
                 "status": "success",
                 "consensus": consensus_summary,
+                "predicted_lineage": predicted_lineage_obj,
                 "query": {
                     "coords": query_pc,
                     "label": int(query_label) if 'labels' in locals() else -1,
@@ -664,7 +687,8 @@ class ScienceKernel:
                         "id": seq_id,
                         "classification": analysis.get("classification"),
                         "lineage": analysis.get("lineage"),
-                        "confidence": float(analysis.get("confidence", 0.0))
+                        "confidence": float(analysis.get("confidence", 0.0)),
+                        "predicted_lineage": analysis.get("predicted_lineage") # Pass through
                     })
 
             # Construct Result
@@ -675,6 +699,7 @@ class ScienceKernel:
                 "classification": analysis.get("classification", "Unknown"),
                 "confidence": float(analysis.get("confidence", 0.0)),
                 "lineage": analysis.get("lineage", "Unknown Lineage"),
+                "predicted_lineage": analysis.get("predicted_lineage"),
                 "workflow": analysis.get("workflow", "Tier 0"),
                 "vector": embedding.tolist() # Enable localized topology query
             }

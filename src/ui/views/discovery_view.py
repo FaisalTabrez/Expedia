@@ -348,6 +348,37 @@ class NTUCard(CardWidget):
         
         div_val.setStyleSheet(f"font-size: 18px; color: {var_color};")
         metrics_layout.addWidget(div_val, 1, 1)
+
+        # LINEAGE RELIABILITY GAUGE
+        # Row 2: Header
+        metrics_layout.addWidget(CaptionLabel("LINEAGE CONSENSUS", self), 2, 0, 1, 2)
+        
+        # Row 3: Progress Bar
+        mean_conf = ntu_data.get("mean_confidence", 0.0) * 100
+        self.reliability_bar = ProgressBar(self)
+        self.reliability_bar.setRange(0, 100)
+        self.reliability_bar.setValue(int(mean_conf))
+        self.reliability_bar.setFixedHeight(6)
+        
+        # Dynamic color based on reliability
+        color = "#00FF00" 
+        if mean_conf < 70: color = "#FFAA00"
+        if mean_conf < 40: color = "#FF4444"
+        
+        # Custom style for progress bar to be minimal
+        self.reliability_bar.setStyleSheet(f"""
+            QProgressBar::chunk {{
+                background-color: {color};
+                border-radius: 3px;
+            }}
+            QProgressBar {{
+                background-color: #222;
+                border: none;
+                border-radius: 3px;
+            }}
+        """)
+        
+        metrics_layout.addWidget(self.reliability_bar, 3, 0, 1, 2)
         
         layout.addWidget(metrics_container)
         
