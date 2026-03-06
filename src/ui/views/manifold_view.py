@@ -264,7 +264,12 @@ class ManifoldView(QWidget):
                 y_vals = [n['coords'][1] for n in neighbors if n.get('coords')]
                 z_vals = [n['coords'][2] for n in neighbors if n.get('coords')]
                 
-                text_vals = [f"{n.get('classification', 'Unknown')}<br>{n.get('lineage','')}" for n in neighbors]
+                text_vals = []
+                for n in neighbors:
+                    # Robust Tooltip Construction: Pulls from Lineage/Phylum
+                    cls = n.get('classification', 'Unknown Entity')
+                    lineage_info = n.get('lineage') or n.get('phylum') or "Context Unresolved"
+                    text_vals.append(f"<b>{cls}</b><br>{lineage_info}")
                 
                 # Dynamic Coloring based on classification if available, else depth/index
                 # Using 'Viridis' color scale as requested for better contrast
@@ -276,11 +281,12 @@ class ManifoldView(QWidget):
                     marker=dict(
                         size=4,
                         color=colors,
-                        colorscale='Viridis',
+                        colorscale='Viridis', # Bioluminescent Green/Blue/Purple
                         opacity=0.8,
                         line=dict(width=0)
                     ),
                     text=text_vals,
+                    hovertemplate="%{text}<extra></extra>",
                     name='Neighborhood'
                 ))
 
