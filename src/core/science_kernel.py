@@ -129,9 +129,22 @@ class ScienceKernel:
         Lazy load heavy models.
         """
         logger.info("Initializing Neural-Core & Vector-Ops engines...")
-        self.embedder = NucleotideEmbedder()
-        self.db = AtlasManager()
-        self.taxonomy = TaxonomyEngine()
+        try:
+            self.embedder = NucleotideEmbedder()
+            self.db = AtlasManager()
+            self.taxonomy = TaxonomyEngine()
+        except Exception as e:
+            logger.critical(f"Model Load Failed: {e}")
+            if sys.__stdout__:
+                sys.__stdout__.write(json.dumps({
+                    "type": "error",
+                    "message": "FATAL: MODEL LOAD FAILED",
+                    "details": str(e)
+                }) + "\n")
+                sys.__stdout__.flush()
+            # Stop execution or re-raise
+            raise e
+
         # Initialize discovery engine if needed
         try:
              self.discovery = DiscoveryEngine()
