@@ -60,8 +60,8 @@ class TaxonomyEngine:
 
         top_name = _normalize(top_hit.get('classification', ''))
         
-        # Check Identity Match (< 5% Divergence)
-        if best_dist < 0.05:
+        # Check Identity Match (Strict > 97% for Identification, matching new logic)
+        if best_dist < 0.03:
              is_blacklisted = False
              blacklist = ['uncultured', 'unidentified', 'metagenome', 'environmental']
              for b in blacklist:
@@ -87,7 +87,8 @@ class TaxonomyEngine:
                     "predicted_lineage": {
                         "status": "CONFIRMED",
                         "lineage_string": prediction['lineage_string'],
-                        "anchor_rank": "Species"
+                        "anchor_rank": "Species",
+                        "confidence_per_rank": prediction.get('confidence_per_rank', [])
                     }
                 }
 
@@ -101,75 +102,126 @@ class TaxonomyEngine:
             "predicted_lineage": {
                 "status": prediction['lineage_status'], # CONFIRMED / DIVERGENT / NOVEL
                 "lineage_string": prediction['lineage_string'],
-                "anchor_rank": prediction['anchor_rank']
+                "anchor_rank": prediction['anchor_rank'],
+                "confidence_per_rank": prediction.get('confidence_per_rank', [])
             }
         }
 
     def predict_lineage(self, df: pd.DataFrame) -> dict:
         """
-        @Bio-Taxon: Hierarchical Consensus Algorithm.
+        @Bio-Taxon: Rank-Specific Divergence Model.
+        Replaces flat thresholds with biological consensus + vector similarity sanity checks.
         """
-        ranks = ['Kingdom', 'Phylum', 'Class', 'Order', 'Family', 'Genus']
+        # Rank-Specific Biological Thresholds (Similarity)
+        RANK_THRESHOLDS = {
+            'Species': 0.97,
+            'Genus': 0.93,
+            'Family': 0.88,
+            'Order': 0.75,
+            'Class': 0.70,
+            'Phylum': 0.60,
+            'Kingdom': 0.50
+        }
+        
+        # Taxonomy Hierarchy (Top-Down)
+        ranks = ['Kingdom', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species']
+        
+        # Get Top Hit Similarity (1.0 - distance)
+        top_dist = float(df.iloc[0].get('_distance', 1.0))
+        top_sim = 1.0 - top_dist
+        
         consensus_path = []
         anchor_rank = "None"
-        max_confidence = 0.0
+        confidence_per_rank = []
         
-        # We need to determine if it's Novel, Divergent, or Confirmed based on consensus
-        lineage_status = "NOVEL" 
-
+        # 1. Hierarchical Consensus with Sanity Check
         for rank in ranks:
-            # Get consensus for this rank
+            # Calculate Consensus (Vote %)
             cons = self._get_consensus_at_rank(df, rank.lower())
             taxon = cons['taxon']
             conf = cons['confidence']
             
-            # Formatting logic for UI
-            # If high confidence (>70%), it's a solid node
+            if taxon == "Unclassified":
+                continue
+
+            # Biological Sanity Check
+            # Even if 100% of neighbors say "Genus X", if we only have 85% similarity,
+            # we CANNOT biologically confirm Genus X. It must be bracketed [X] or treated as 'Novel X-like'.
+            
+            threshold = RANK_THRESHOLDS.get(rank, 0.0)
+            is_biologically_supported = top_sim >= threshold
+            
+            # Logic:
+            # - High Consensus (>70%) + Supported Sim -> Confirmed Rank (Normal string)
+            # - High Consensus (>70%) + Unsupported Sim -> Inferred/Novel (Bracketed [Name])
+            # - Medium Consensus (30-70%) -> Inferred (Bracketed [Name])
+            # - Low Consensus (<30%) -> Drop
+            
+            display_name = taxon
+            
             if conf > 0.7:
-                consensus_path.append(taxon)
-                anchor_rank = f"{rank}: {taxon} ({int(conf*100)}%)"
+                if is_biologically_supported:
+                    # Confirmed
+                    consensus_path.append(taxon)
+                    anchor_rank = f"{rank}: {taxon} ({int(conf*100)}%)"
+                else:
+                    # High consensus but vector distance implies novelty/divergence
+                    consensus_path.append(f"[{taxon}]")
+                    # We keep previous anchor_rank as valid anchor
             elif conf > 0.3:
-                 # Inferred/Probable but not confirmed - wrap in brackets
+                # Weak consensus
                 consensus_path.append(f"[{taxon}]")
-            else:
-                # Too uncertain, stop propagation or mark as unknown ??
-                # The user requirement says: "If a rank is inferred via consensus but not confirmed by identity..."
-                # Use cutoff
-                pass
+            
+            confidence_per_rank.append((rank, conf))
+
+        # 2. Status Determination (Scientific Labeling)
+        # > 97%: IDENTIFIED
+        # 93 - 97%: DIVERGENT SPECIES
+        # 88 - 93%: NOVEL GENUS
+        # 75 - 88%: NOVEL FAMILY/ORDER
+        # < 75%: EXTREME NOVELTY (DARK TAXA)
+        
+        if top_sim > 0.97:
+            lineage_status = "IDENTIFIED"
+            classification = df.iloc[0].get('classification', 'Unknown')
+        elif top_sim >= 0.93:
+            lineage_status = "DIVERGENT SPECIES"
+            # Name: "Genus sp. (cf. Closest)"
+            genus_name = self._get_safe_name(consensus_path, 'Genus')
+            classification = f"{genus_name} sp."
+        elif top_sim >= 0.88:
+            lineage_status = "NOVEL GENUS"
+            family_name = self._get_safe_name(consensus_path, 'Family')
+            classification = f"Novel Genus ({family_name})"
+        elif top_sim >= 0.75:
+            lineage_status = "NOVEL FAMILY/ORDER"
+            classification = "Novel Order/Family"
+        else:
+            lineage_status = "EXTREME NOVELTY (DARK TAXA)"
+            classification = "Unknown Biological Entity"
 
         # Build Lineage String
         lineage_str = " > ".join(consensus_path) if consensus_path else "Unresolved Lineage"
-        
-        # Determine Classification name from the lowest solid rank
-        # If we have brackets at the end, the classification is likely "Novel [Genus]"
-        last_solid = "Unknown"
-        for p in reversed(consensus_path):
-            if not p.startswith("["):
-                last_solid = p
-                break
-        
-        # Simple heuristic for status
-        # If top hit distance > 0.15 (85% sim) -> Novel
-        # We need the distance here, but strict separation... let's check input df headers
-        top_dist = float(df.iloc[0].get('_distance', 1.0))
-        if top_dist < 0.05:
-            lineage_status = "CONFIRMED"
-            classification = df.iloc[0].get('classification', 'Unknown')
-        elif top_dist < 0.20:
-             lineage_status = "DIVERGENT"
-             classification = f"cf. {last_solid}"
-        else:
-             lineage_status = "NOVEL"
-             classification = f"Novel {last_solid}-like"
 
         return {
             "lineage_string": lineage_str,
             "anchor_rank": anchor_rank,
             "lineage_status": lineage_status,
             "classification": classification,
-            "confidence": 1.0 - top_dist,
-            "status": "Identified" if lineage_status == "CONFIRMED" else "Novel"
+            "confidence": top_sim,
+            "confidence_per_rank": confidence_per_rank,
+            "status": "Identified" if lineage_status == "IDENTIFIED" else "Novel"
         }
+
+    def _get_safe_name(self, path, rank_name):
+        """Helper to extract unbracketed name if possible"""
+        # This assumes path order matches ranks list somewhat, 
+        # but path only contains names. Simplistic extraction:
+        # Just grab the last non-bracketed item?
+        for p in reversed(path):
+            if not p.startswith("["):
+                return p
+        return "Unknown"
 
     def _get_consensus_at_rank(self, df: pd.DataFrame, rank: str) -> dict:
         """

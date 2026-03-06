@@ -61,6 +61,95 @@ class DropZone(QFrame):
         if file_path:
             self.file_selected.emit(file_path)
 
+class RankBreadcrumbBar(QWidget):
+    """
+    @UX-Visionary: Visual Rank Indicators.
+    Displays confidence levels for Linnaean ranks (P, C, O, F, G, S).
+    """
+    def __init__(self, confidence_per_rank, lineage_parts, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(18)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        
+        # Standard Ranks
+        RANKS = [
+            ('P', 'Phylum'), 
+            ('C', 'Class'), 
+            ('O', 'Order'), 
+            ('F', 'Family'), 
+            ('G', 'Genus'), 
+            ('S', 'Species')
+        ]
+        
+        # Parse available data into a map: RankName -> (Confidence, IsBracketed)
+        data_map = {}
+        
+        # Zip logic: lineage_parts corresponds to confidence_per_rank by index
+        # BUT confidence_per_rank has full names like "Phylum", "Class"
+        # We need to trust the order from taxonomy.py is consistently descending?
+        # taxonomy.py: for rank in ['Kingdom', 'Phylum', ...] -> append
+        # So yes, they are ordered.
+        
+        for idx, (rank_name, conf) in enumerate(confidence_per_rank):
+            name_in_string = lineage_parts[idx] if idx < len(lineage_parts) else ""
+            is_bracketed = "[" in name_in_string
+            clean_name = name_in_string.replace("[", "").replace("]", "")
+            data_map[rank_name] = {
+                "conf": conf,
+                "is_bracketed": is_bracketed,
+                "name": clean_name
+            }
+
+        # Build Indicators
+        for code, full_rank in RANKS:
+            lbl = QLabel(code, self)
+            lbl.setFixedSize(16, 16)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Determine Color
+            # Default: Red/Grey (Missing/Low)
+            bg_color = "#331111" # Dark Red background for missing
+            border_color = "#552222"
+            text_color = "#885555"
+            tooltip = f"{full_rank}: Insufficient Data"
+
+            if full_rank in data_map:
+                info = data_map[full_rank]
+                name = info['name']
+                is_bracketed = info['is_bracketed']
+                
+                tooltip = f"{full_rank}: {name}"
+                if is_bracketed:
+                    # Inferred (Yellow)
+                    bg_color = "#333300"
+                    border_color = "#666600"
+                    text_color = "#FFFF00"
+                    tooltip += " (Inferred/Divergent)"
+                else:
+                    # Confirmed (Green)
+                    bg_color = "#003300"
+                    border_color = "#006600"
+                    text_color = "#00FF00"
+                    tooltip += " (Confirmed)"
+            
+            lbl.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {bg_color};
+                    border: 1px solid {border_color};
+                    border-radius: 2px;
+                    color: {text_color};
+                    font-size: 9px;
+                    font-weight: bold;
+                    font-family: 'Consolas';
+                }}
+            """)
+            lbl.setToolTip(tooltip)
+            layout.addWidget(lbl)
+            
+        layout.addStretch()
+
 class DiscoveryCard(CardWidget):
     """
     @WinUI-Fluent: Result Card.
@@ -71,7 +160,7 @@ class DiscoveryCard(CardWidget):
     def __init__(self, result_data, parent=None):
         super().__init__(parent)
         self.result_data = result_data
-        self.setFixedSize(340, 130)  # Compact design
+        self.setFixedSize(340, 140)  # Slightly taller for breadcrumbs
         
         # Colors
         is_novel = result_data.get("status") == "Novel"
@@ -89,46 +178,72 @@ class DiscoveryCard(CardWidget):
         
         # Content
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(12, 10, 5, 10)
-        content_layout.setSpacing(4)
+        content_layout.setContentsMargins(12, 8, 5, 8)
+        content_layout.setSpacing(2)
         
-        # Header: ID + Confidence
+        # Header: ID + Rank Indicators
         header = QHBoxLayout()
         header.setSpacing(10)
         
         id_text = result_data.get("id", "Unknown").upper()
+        # Truncate long IDs
+        if len(id_text) > 12: id_text = id_text[:12] + "..."
+        
         self.id_label = CaptionLabel(id_text, self)
         self.id_label.setStyleSheet("color: #888; font-weight: bold; font-family: 'Consolas';")
-        
-        conf_val = result_data.get("confidence", 0.0) * 100
-        self.conf_label = CaptionLabel(f"{conf_val:.1f}% CONF", self)
-        self.conf_label.setStyleSheet(f"color: {accent_color}; font-family: 'Consolas'; font-weight: bold;")
+        self.id_label.setToolTip(f"Sequence ID: {result_data.get('id')}")
         
         header.addWidget(self.id_label)
         header.addStretch()
-        header.addWidget(self.conf_label)
+        
+        # RANK INDICATORS (Breadcrumb Bar)
+        pred_lineage = result_data.get("predicted_lineage", {})
+        conf_per_rank = pred_lineage.get("confidence_per_rank", [])
+        lineage_str = pred_lineage.get("lineage_string", "")
+        
+        # We need to split the lineage string to match ranks
+        # Logic: "Kingdom > Phylum > ..."
+        # Note: If lineage is "Unknown", parts is ["Unknown"]
+        lineage_parts = [p.strip() for p in lineage_str.split(">")]
+        
+        # If confidence_per_rank is missing (legacy data), show single conf
+        if not conf_per_rank:
+            conf_val = result_data.get("confidence", 0.0) * 100
+            self.conf_label = CaptionLabel(f"{conf_val:.1f}% CONF", self)
+            self.conf_label.setStyleSheet(f"color: {accent_color}; font-family: 'Consolas'; font-weight: bold;")
+            header.addWidget(self.conf_label)
+        else:
+            # Show Visual Breadcrumbs
+            self.breadcrumbs = RankBreadcrumbBar(conf_per_rank, lineage_parts, self)
+            self.breadcrumbs.setToolTip("Identity thresholds calibrated based on 18S rRNA evolutionary decay constants (97% Species / 88% Family).")
+            header.addWidget(self.breadcrumbs)
         
         # Classification
         class_text = result_data.get("classification", "Unclassified").upper()
         self.class_label = SubtitleLabel(class_text, self)
         if is_novel:
             self.class_label.setStyleSheet(f"color: {accent_color}; font-weight: bold;")
-            
-        # Lineage (Taxonomic Context)
-        # Check for new predicted_lineage object first
-        pred_lineage = result_data.get("predicted_lineage", {})
-        if pred_lineage and "lineage_string" in pred_lineage:
-            lineage_text = pred_lineage["lineage_string"]
-        else:
-            lineage_raw = result_data.get("lineage", "Unknown Lineage")
-            if isinstance(lineage_raw, list):
-                lineage_raw = " › ".join(lineage_raw)
-            lineage_text = str(lineage_raw).replace(" > ", " › ")
         
-        self.lineage_label = CaptionLabel(lineage_text, self)
-        # Updates: Monospace, slightly brighter for readability against dark background
+        # Lineage Label with Smart Redaction
+        # Convert [Name] to Name (?) in italics
+        smart_lineage_text = lineage_str
+        if smart_lineage_text:
+             # HTML Replacement
+             # Escape existing HTML chars first? Assumed safe.
+             import re
+             # Replace [Name] with <i>Name (?)</i>
+             # Use span to color differently?
+             smart_lineage_text = re.sub(r"\[(.*?)\]", r"<i style='color:#FFFF00'>\1 (?)</i>", smart_lineage_text)
+             # Replace separators
+             smart_lineage_text = smart_lineage_text.replace(">", "<span style='color:#444'>›</span>")
+        else:
+            smart_lineage_text = "Unknown Lineage"
+            
+        self.lineage_label = QLabel(self)
+        self.lineage_label.setText(smart_lineage_text)
         self.lineage_label.setStyleSheet("color: #CCC; font-family: 'Consolas', monospace; font-size: 11px;")
         self.lineage_label.setWordWrap(False)
+        self.lineage_label.setTextFormat(Qt.TextFormat.RichText)
         
         # Action Button
         action_layout = QHBoxLayout()
