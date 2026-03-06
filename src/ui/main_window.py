@@ -31,6 +31,7 @@ class MainWindow(FluentWindow):
     request_inference = Signal(str)
     # request_localized_manifold = Signal(list) # Changed to dict for ID context
     request_localized_manifold = Signal(dict)
+    request_kernel_boot = Signal() # Signal to trigger async boot
 
     def __init__(self):
         super().__init__()
@@ -64,12 +65,17 @@ class MainWindow(FluentWindow):
         # Connect Signals
         self.request_inference.connect(self.worker.run_inference)
         self.request_localized_manifold.connect(self.worker.request_localized_topology)
+        self.request_kernel_boot.connect(self.worker.startup_kernel)
         
         self.worker.progress.connect(self.monitor_interface.update_progress)
         self.worker.batch_complete.connect(self.on_batch_complete)
         self.worker.error.connect(self.on_worker_error)
         self.worker.sequence_processed.connect(self.on_sequence_processed)
         self.worker.localized_topology_ready.connect(self.on_localized_topology_ready)
+        
+        # Kernel Boot Status
+        self.worker.status_update.connect(self.on_kernel_status_update)
+        self.worker.kernel_ready.connect(self.on_kernel_ready)
 
         # Status Bar Action - Using Monitor View for Export to avoid crashes
         if hasattr(self.monitor_interface, 'batch_summary'):
@@ -228,6 +234,11 @@ class MainWindow(FluentWindow):
             log(f"DATABASE: {app_config.ATLAS_TABLE_NAME} IS ONLINE.")
         else:
              log(f"DATABASE: {app_config.ATLAS_TABLE_NAME} FAILED TO LOAD.")
+
+        # Trigger Kernel Boot
+        if not self.worker_thread.isRunning():
+            self.worker_thread.start()
+        self.request_kernel_boot.emit()
 
         # 2. Update Status Bar
         # FluentWindow inheritance check
@@ -468,3 +479,38 @@ class MainWindow(FluentWindow):
         Programmatic navigation switching.
         """
         self.switchTo(route_key)
+
+    @Slot(str)
+    def on_kernel_status_update(self, msg: str):
+        """
+        @UX-Visionary: Updates the booting indicator.
+        """
+        # Forward to DropZone UI
+        if self.monitor_interface and self.monitor_interface.drop_zone:
+            self.monitor_interface.drop_zone.set_kernel_loading(True, msg)
+        
+        # Also log to terminal
+        if self.monitor_interface:
+            self.monitor_interface.log_message(msg)
+
+    @Slot()
+    def on_kernel_ready(self):
+        """
+        @UX-Visionary: Enables user interaction once ScienceKernel is online.
+        """
+        if self.monitor_interface and self.monitor_interface.drop_zone:
+            self.monitor_interface.drop_zone.set_kernel_loading(False)
+            
+        if self.monitor_interface:
+            self.monitor_interface.log_message("SYSTEM: BIOLOGICAL INTELLIGENCE UNIT ONLINE.")
+            
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        InfoBar.success(
+            title="NEURAL-CORE READY",
+            content="NUCLEOTIDE TRANSFORMER (v2-50M) INITIALIZED.",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP_RIGHT,
+            duration=4000,
+            parent=self
+        ).show()

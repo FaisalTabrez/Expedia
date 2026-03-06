@@ -33,9 +33,10 @@ class DropZone(QFrame):
             }}
         """)
         
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout = QVBoxLayout(self)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        # Normal State Widgets
         self.label = SubtitleLabel("DRAG & DROP FASTA FILES OR BROWSE EDGE FILESYSTEM", self)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
@@ -43,9 +44,44 @@ class DropZone(QFrame):
         self.browse_btn.setFixedWidth(200)
         self.browse_btn.clicked.connect(self.select_file)
         
-        layout.addWidget(self.label)
-        layout.addSpacing(10)
-        layout.addWidget(self.browse_btn)
+        # Loading State Widgets (Hidden by default)
+        self.loading_label = CaptionLabel("INITIALISING NEURAL-CORE (30s EST)", self)
+        self.loading_label.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-weight: bold;")
+        self.loading_label.hide()
+        
+        self.progress_bar = ProgressBar(self)
+        self.progress_bar.setFixedWidth(200)
+        # Indeterminate pulsing animation
+        self.progress_bar.setRange(0, 0) 
+        self.progress_bar.hide()
+        
+        self.layout.addWidget(self.label)
+        self.layout.addSpacing(10)
+        self.layout.addWidget(self.browse_btn)
+        self.layout.addWidget(self.loading_label)
+        self.layout.addWidget(self.progress_bar)
+        
+        # Start in Boot Mode by default
+        self.set_kernel_loading(True, "INITIALISING NEURAL-CORE (50s EST)")
+
+    def set_kernel_loading(self, is_loading, message=None):
+        """
+        Toggles between File Selection and Kernel Boot visualization.
+        """
+        if is_loading:
+            self.browse_btn.setEnabled(False)
+            self.browse_btn.setText("SYSTEM BOOTING...")
+            self.label.hide()
+            self.loading_label.show()
+            self.progress_bar.show()
+            if message:
+                self.loading_label.setText(message.upper())
+        else:
+            self.browse_btn.setEnabled(True)
+            self.browse_btn.setText("SELECT SEQUENCE FILE")
+            self.label.show()
+            self.loading_label.hide()
+            self.progress_bar.hide()
 
     def select_file(self):
         from PySide6.QtWidgets import QFileDialog

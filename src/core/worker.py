@@ -33,24 +33,38 @@ class DiscoveryWorker(QObject):
     kernel_log = Signal(str)                # New signal for raw kernel logs
     localized_topology_ready = Signal(dict) # Emits Localized Topology JSON
     finished = Signal()
+    kernel_ready = Signal()                 # Emits when science kernel is fully loaded
+    status_update = Signal(str)             # Emits boot status messages
 
     def __init__(self):
         super().__init__()
         self._is_running = False
         self._process = None
 
-    def _ensure_kernel_started(self):
+    def startup_kernel(self):
+        """
+        Public slot to boot the kernel on app launch.
+        Captures the 53s 'Importing Torch' phase and reports status.
+        """
+        try:
+            self._ensure_kernel_started(emit_status=True)
+        except Exception as e:
+            self.error.emit(f"Kernel Boot Failed: {e}")
+
+    def _ensure_kernel_started(self, emit_status=False):
         """
         Idempotent function to ensure the Science Kernel process is running.
         """
         if self._process is not None:
              if self._process.poll() is None:
+                 if emit_status: self.kernel_ready.emit()
                  return # Already running
              else:
                  logger.warning(f"Kernel process died with code {self._process.returncode}. Restarting...")
 
         # Launch Science Kernel
-        kernel_path = os.path.join(os.path.dirname(__file__), "science_kernel.py")
+        # Determine strict path to kernel (relative to this file)
+        kernel_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "science_kernel.py"))
         cmd = [sys.executable, kernel_path]
         
         # Ensure PYTHONPATH includes project root AND Sync Hardware Anchor
@@ -59,6 +73,7 @@ class DiscoveryWorker(QObject):
         # @Data-Ops: Sync Root Path to Child Process
         env["EXPEDIA_ROOT_PATH"] = str(app_config.DATA_ROOT)
         
+        # Fix PYTHONPATH to include project root
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
         if "PYTHONPATH" in env:
              env["PYTHONPATH"] = project_root + os.pathsep + env["PYTHONPATH"]
@@ -73,7 +88,8 @@ class DiscoveryWorker(QObject):
             ]
             env["PATH"] = os.pathsep.join(library_paths) + os.pathsep + env.get("PATH", "")
 
-        logger.info(f"Launching Science Kernel: {kernel_path} [Root: {app_config.DATA_ROOT}]")
+        logger.info(f"Launching Science Kernel: {kernel_path}")
+        if emit_status: self.status_update.emit("Booting Science Kernel...")
         
         try:
             # Popen with piping
@@ -81,39 +97,51 @@ class DiscoveryWorker(QObject):
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=sys.stderr, # Forward kernel logs to main console
+                stderr=sys.stderr, # Forward fatal errors to console
                 env=env,
                 text=True,
                 bufsize=1, # Line buffered
                 encoding='utf-8' # Force UTF-8 for JSON
             )
             
-            # Assert pipes for type safety
-            if not self._process.stdout or not self._process.stdin:
-                raise RuntimeError("Failed to open pipes to Science Kernel")
-
-            # 3. Handshake & Command
-            # Read stdout until {"type": "status", "status": "ready"}
+            # Handshake Loop (~50s of Imports)
             while True:
                 ready_line = self._process.stdout.readline()
                 if not ready_line:
-                    # Check if process exited with error
                     if self._process.poll() is not None:
                          raise RuntimeError(f"Science Kernel process exited with code {self._process.returncode}")
-                    raise RuntimeError("Science Kernel failed to start (EOF).")
+                    continue # Spin wait? No, readline blocks. 
                 
                 try:
+                    # Parse Log vs Status
+                    # The kernel emits {"type": "log", "message": "Importing Torch..."}
                     msg = json.loads(ready_line)
+                    
                     if msg.get("type") == "log":
-                         logger.info(f"KERNEL LOG: {msg.get('message')}")
+                         text = msg.get('message', '')
+                         logger.info(f"KERNEL LOG: {text}")
+                         if emit_status: self.status_update.emit(text)
+                         
                     elif msg.get("type") == "status" and msg.get("status") == "ready":
                          logger.info("Kernel reported READY status.")
+                         if emit_status: 
+                             self.status_update.emit("Science Kernel Ready.")
+                             self.kernel_ready.emit()
                          break
+                         
+                    elif msg.get("type") == "error":
+                         err_msg = msg.get("message")
+                         if emit_status: self.status_update.emit(f"Kernel Error: {err_msg}")
+                         logger.error(f"KERNEL ERROR: {err_msg}")
+
                 except json.JSONDecodeError:
-                     logger.warning(f"Kernel sent non-JSON on startup: {ready_line.strip()}")
+                     # Raw print debugging
+                     if ready_line.strip():
+                        logger.warning(f"Raw Kernel Output: {ready_line.strip()}")
                      
         except Exception as e:
             logger.error(f"Failed to start Science Kernel: {e}")
+            if emit_status: self.status_update.emit(f"Kernel Integrity Failure: {e}")
             self._process = None
             raise
 
@@ -143,6 +171,7 @@ class DiscoveryWorker(QObject):
             if total_records == 0:
                 raise ValueError("No sequences found in FASTA file.")
                 
+            # If kernel crashed or wasn't started, boot it now (blocking UI for imports if not ready)
             self._ensure_kernel_started()
                 
         except Exception as e:
