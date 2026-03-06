@@ -24,4 +24,4 @@
 ### @Bio-Taxon (Taxonomy Specialist)
 - **Focus**: Triple-Tier Hybrid Inference.
 - **Role**: Implements Consensus logic ($k=50$), WoRMS Oracle fuzzy matching, and TaxonKit lineage expansion.
-- **Discovery**: HDBSCAN clustering for Novel Taxonomic Units (NTUs).
+- **Discovery**: HDBSCAN clustering for Non-Reference Genomic Signatures (NRGS).

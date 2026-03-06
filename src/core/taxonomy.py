@@ -325,7 +325,7 @@ class TaxonomyEngine:
                 # Found a solid anchor
                 return f"Novel {rank.capitalize()} in {rank.capitalize()} {cons['taxon']}"
                 
-        return "Novel Biological Entity (Deep Divergence)"
+        return "NON-REFERENCE GENOMIC SIGNATURE (NRGS)"
 
     def _build_lineage_string(self, df: pd.DataFrame) -> str:
         """

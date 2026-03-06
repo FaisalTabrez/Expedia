@@ -53,10 +53,13 @@ class StorageHealthPanel(CardWidget):
         
         # Funding Requirement Text
         funding_lbl = CaptionLabel(
-            "TRC FUNDING REQUIREMENT: 2TB NVMe SSD for Whole-Genome Metagenomic Surveillance.", 
+            "INFRASTRUCTURE UPGRADE PROPOSAL:\n"
+            "Acquisition of 2TB TRC NVMe Array for high-throughput surveillance. "
+            "Transition from Tier-1 Micro-Atlas (100k) to Tier-3 Metagenomic Indexing (4.2M+ signatures).", 
             self
         )
-        funding_lbl.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-weight: bold; margin-top: 5px;")
+        funding_lbl.setWordWrap(True)
+        funding_lbl.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-weight: bold; margin-top: 5px; font-family: 'Consolas';")
         layout.addWidget(funding_lbl)
         
         layout.addSpacing(10)
@@ -109,7 +112,7 @@ class BenchmarkingView(QWidget):
         self.main_layout.setSpacing(20)
         
         # Title
-        self.main_layout.addWidget(TitleLabel("SYSTEM BENCHMARKING & SCALABILITY", self))
+        self.main_layout.addWidget(TitleLabel("HARDWARE PERFORMANCE AND SCALABILITY", self))
 
         # 1. Storage Health Panel
         self.storage_panel = StorageHealthPanel(self)
@@ -133,35 +136,52 @@ class BenchmarkingView(QWidget):
         
         self.main_layout.addWidget(charts_container)
         
-        # IOPS Label
-        self.iops_label = TitleLabel("0.0 MB/s", self)
+        # IOPS Label (Hardware Anchor Status)
+        self.iops_label = TitleLabel("I/O: 0.0 MB/s (USB 3.0 LIMITATION)", self)
+        self.iops_label.setStyleSheet("color: #888; font-family: 'Consolas'; font-size: 14px;")
         self.main_layout.addWidget(self.iops_label)
         
         # Fixing psutil section
         # IOPS Timer
         self.io_timer = QTimer(self)
-        self.io_timer.timeout.connect(self.update_iops)
+        self.io_timer.timeout.connect(self.update_iops_metrics) # Renamed to reflect logic update
         self.io_timer.start(1000)
-        self.last_io = psutil.disk_io_counters()
+        self.last_io = None # Will init on first tick
 
         # Render Charts
         self.render_latency_chart()
         self.render_horizon_chart()
 
-    def update_iops(self):
+    def update_iops_metrics(self):
         try:
             current_io = psutil.disk_io_counters()
-            # Calculate diff
-            if current_io and self.last_io:
+            
+            if self.last_io:
+                # Calculate Read Speed (primary bottleneck for inference)
                 read_bytes = current_io.read_bytes - self.last_io.read_bytes
-                mb_s = read_bytes / (1024 * 1024)
+                read_mb_s = read_bytes / (1024 * 1024)
                 
-                self.iops_label.setText(f"{mb_s:.1f} MB/s")
-                self.last_io = current_io
-            else:
-                 self.iops_label.setText("N/A")
+                # Contextual status based on Volume E: (NTFS) limits
+                # USB 3.0 theoretical max ~600MB/s, practical ~100-300MB/s
+                # HDD anchor likely ~80-120MB/s
+                
+                status_color = "#888888" # Grey (Idle)
+                status_text = "IDLE"
+                
+                if read_mb_s > 100:
+                     status_color = "#00FF00" # Green (High Throughput)
+                     status_text = "SATURATED"
+                elif read_mb_s > 10:
+                     status_color = app_config.THEME_COLORS['primary']
+                     status_text = "ACTIVE"
+                     
+                self.iops_label.setText(f"ANCHOR READ SPEED: {read_mb_s:.1f} MB/s [{status_text}]")
+                self.iops_label.setStyleSheet(f"color: {status_color}; font-family: 'Consolas'; font-size: 14px;")
+            
+            self.last_io = current_io
+            
         except Exception:
-            self.iops_label.setText("N/A")
+            self.iops_label.setText("I/O METRICS UNAVAILABLE")
 
     def _render_chart_safely(self, fig, view_widget):
         """

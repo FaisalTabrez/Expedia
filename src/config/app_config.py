@@ -149,9 +149,11 @@ CONSENSUS_K_NEIGHBORS = 50   # Number of neighbors for majority vote
 # -----------------------------------------------------------------------------
 
 THEME_COLORS = {
-    "background": "#0A0F1E",  # Abyss Dark
-    "primary": "#00E5FF",     # Cyan
-    "accent": "#FF007A",      # Neon Pink
+    "background": "#0F0F0F",  # True Black/Onyx
+    "primary": "#0078D4",     # Windows Professional Blue
+    "accent": "#0078D4",      # Windows Professional Blue (Unified)
+    "sidebar": "#1A1A1A",     # Sidebar Dark Grey
+    "border": "#333333",      # Subtle Border
     "text_primary": "#FFFFFF", # White
     "foreground": "#FFFFFF"   # Added for backward compatibility/Dashboard
 }

@@ -73,69 +73,52 @@ class ManualView(QWidget):
         self.main_layout.addWidget(self.scroll)
 
         # Title
-        self.page_title = TitleLabel("SYSTEM ARCHITECTURE & MANUAL", self.container)
+        self.page_title = TitleLabel("TECHNICAL SPECIFICATIONS", self.container)
         self.v_layout.addWidget(self.page_title)
 
         self._populate_sections()
         self.v_layout.addStretch()
 
     def _populate_sections(self):
-        # 1. Systemic Constraints
+        # 1.0 SYSTEM ARCHITECTURE
         text_1 = (
-            "THE REFERENCE GAP:\n"
-            "Traditional BLAST algorithms fail on novel taxa due to reliance on exact string matching. "
-            "Deep-sea biodiversity assessment faces a 'Reference Gap' where >90% of eDNA sequences "
-            "lack direct matches in public databases (NCBI/GenBank).\n\n"
-            "COMPUTATIONAL WALL:\n"
-            "Pairwise alignment scales at O(N) complexity per query against N references. "
-            "For large environmental batches, this becomes computationally intractable on standard hardware. "
-            "DeepBio-Scan Pro utilizes approximate nearest neighbor search to achieve O(log N) complexity."
+            "KERNEL ISOLATION:\n"
+            "The Inference Engine operates in a dedicated subprocess, isolated from the UI thread to prevent blocking. "
+            "Inter-Process Communication (IPC) is handled via JSON-RPC over Standard Streams.\n\n"
+            "WORKER ORCHESTRATION:\n"
+            "A specialized QThread 'DiscoveryWorker' manages the lifecycle of the Science Kernel, handling asynchronous "
+            "inference requests and real-time status telemetry."
         )
-        self.v_layout.addWidget(ManualSection("1. SYSTEMIC CONSTRAINTS", text_1))
+        self.v_layout.addWidget(ManualSection("1.0 SYSTEM ARCHITECTURE: KERNEL ISOLATION MODEL", text_1))
 
-        # 2. Genomic Representation Learning
+        # 2.0 REPRESENTATION LEARNING
         text_2 = (
-            "MODEL FOUNDATION:\n"
-            "The system utilizes the Nucleotide Transformer v2-50M, a foundational model pretrained on "
-            "diverse genomic datasets. It employs 6-mer tokenization to capture local sequence motifs.\n\n"
-            "LATENT SPACE MANIFOLD:\n"
-            "Sequences are projected into a high-dimensional feature space R_768. Unlike scalar metrics, "
-            "this embedding captures semantic evolutionary relationships, allowing for the detection of "
-            "homology even in the absence of significant sequence identity."
+            "MODEL PARAMETRICS:\n"
+            "The system utilizes the Nucleotide Transformer v2-50M with 6-mer tokenization to capture complex genomic motifs. "
+            "This approach transcends traditional alignment by encoding sequences into semantic vectors.\n\n"
+            "LATENT SPACE RESOLUTION:\n" # Formerly Deep Dive
+            "Sequences are projected into R_768. This high-dimensional embedding enables precise semantic similarity "
+            "assessment, crucial for identifying distant homology in Benthic environments." # Formerly Abyss
         )
-        self.v_layout.addWidget(ManualSection("2. GENOMIC REPRESENTATION LEARNING", text_2))
+        self.v_layout.addWidget(ManualSection("2.0 REPRESENTATION LEARNING: TRANSFORMER PARAMETRICS", text_2))
 
-        # 3. Vector Engineering
+        # 3.0 TOPOLOGICAL ANALYSIS
         text_3 = (
-            "INDEXING STRATEGY:\n"
-            "To manage the 100,000+ reference signatures, the system employs an Inverted File Index "
-            "with Product Quantization (IVF-PQ) via LanceDB. This technique partitions the vector space "
-            "using Voronoi cells, reducing the search scope.\n\n"
-            "PERFORMANCE:\n"
-            "This architecture enables sub-10ms query latency on Volume E: (NTFS) via disk-native memory "
-            "mapping, maintaining low RAM footprint during high-throughput inference."
+            "NON-LINEAR MANIFOLD:\n"
+            "Uniform Manifold Approximation and Projection (UMAP) reduces the 768-d feature space to a 3-d manifold "
+            "for visualization, preserving topological structures.\n\n"
+            "DENSITY-BASED CLUSTERING:\n"
+            "HDBSCAN identifies clusters of Non-Reference Taxa (NRT) based on density reachability, effectively "
+            "isolating novel signatures from noise without requiring a pre-defined cluster count." # Formerly Dark Taxa
         )
-        self.v_layout.addWidget(ManualSection("3. VECTOR ENGINEERING", text_3))
+        self.v_layout.addWidget(ManualSection("3.0 TOPOLOGICAL ANALYSIS: NON-LINEAR MANIFOLD PIPELINE", text_3))
 
-        # 4. Hybrid Inference
+        # 4.0 VALIDATION
         text_4 = (
-            "TRIPLE-TIER RESOLUTION:\n"
-            "Tier 1 (Consensus): Determines classification via majority vote of the k=50 nearest neighbors "
-            "in the latent space.\n"
-            "Tier 2 (Validation): Cross-references candidates against the World Register of Marine Species "
-            "(WoRMS) for taxonomic authority.\n"
-            "Tier 3 (Reconstruction): Utilizes TaxonKit to expand lineage metadata for resolved taxa."
+            "PERFORMANCE BENCHMARKS:\n"
+            "The IVF-PQ index enables O(log N) search complexity, achieving sub-10ms retrieval times against the 100k reference dataset.\n\n"
+            "OPERATIONAL THROUGHPUT:\n"
+            "The system sustains high-throughput ingestion via batched inference, ensuring responsive In-situ genomic analysis " # Formerly Hidden World
+            "on standard hardware."
         )
-        self.v_layout.addWidget(ManualSection("4. HYBRID INFERENCE ENGINE", text_4))
-
-        # 5. NRT Discovery
-        text_5 = (
-            "NOVEL TAXONOMIC UNITS (NTU):\n"
-            "Sequences with a semantic similarity score < 85% relative to the best reference match are "
-            "flagged as Non-Reference Taxa (NRT). These entities represent potential novel biodiversity.\n\n"
-            "UNSUPERVISED CLUSTERING:\n"
-            "The Discovery Engine aggregates NRTs and utilizes HDBSCAN to identify density-based clusters. "
-            "Valid clusters are designated as NTUs, and their centroids are calculated to represent the "
-            "hypothetical consensus sequence of the new taxon."
-        )
-        self.v_layout.addWidget(ManualSection("5. NOVELTY DISCOVERY FRAMEWORK", text_5))
+        self.v_layout.addWidget(ManualSection("4.0 VALIDATION: PERFORMANCE BENCHMARKS", text_4))

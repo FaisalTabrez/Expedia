@@ -46,8 +46,8 @@ def apply_abyss_theme(app):
     }}
     /* Navigation Panel Override */
     NavigationInterface {{
-        background-color: {app_config.THEME_COLORS["background"]};
-        border: none;
+        background-color: {app_config.THEME_COLORS["sidebar"]};
+        border-right: 1px solid {app_config.THEME_COLORS["border"]};
     }}
     """
     
@@ -70,14 +70,14 @@ def main():
     # -------------------------------------------------------------------------
     # Create a programmatic splash screen since assets might be missing
     splash_pix = QPixmap(600, 400)
-    splash_pix.fill(QColor("#05080F")) # Deep Abyss
+    splash_pix.fill(QColor(app_config.THEME_COLORS["background"])) # True Black
 
     painter = QPainter(splash_pix)
-    painter.setPen(QPen(QColor("#00E5FF"), 2)) # Cyan Accent
+    painter.setPen(QPen(QColor(app_config.THEME_COLORS["primary"]), 2)) # Windows Blue
     painter.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
     
     # Draw Title
-    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "EXPEDIA\nver 2.0")
+    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "EXPEDIA\nPRECISION GENOMIC ANALYTIC ENGINE")
     
     # Draw Loading Text
     painter.setFont(QFont("Consolas", 10))
@@ -91,7 +91,7 @@ def main():
     app.processEvents() # Ensure splash shows immediately
     
     # Apply Theme
-    splash.showMessage("APPLYING FLUENT THEME...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft, QColor("#00E5FF"))
+    splash.showMessage("APPLYING FLUENT THEME...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft, QColor(app_config.THEME_COLORS["primary"]))
     apply_abyss_theme(app)
     time.sleep(0.5) # Simulate load for visual feedback
     

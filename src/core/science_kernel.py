@@ -347,7 +347,7 @@ class ScienceKernel:
                 common_lineage = Counter(lineages).most_common(1)[0][0]
 
                 # D. ID Generation
-                ntu_id = f"EXPEDIA-NTU-{int(time.time())}-{label}"
+                ntu_id = f"EXPEDIA-NRGS-{int(time.time())}-{label}"
                 
                 # E. Confidence Metrics
                 if cluster_meta:
@@ -814,7 +814,7 @@ class ScienceKernel:
                 divergence = np.mean(dists)
 
                 results.append({
-                    "ntu_id": f"EXPEDIA-NTU-{int(time.time())}-{label}",
+                    "ntu_id": f"EXPEDIA-NRGS-{int(time.time())}-{label}",
                     "size": len(cluster_members),
                     "anchor_taxon": anchor,
                     "lineage": lineage,

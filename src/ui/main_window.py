@@ -37,7 +37,7 @@ class MainWindow(FluentWindow):
         super().__init__()
         
         # Window Setup
-        self.setWindowTitle("EXPEDIA: DEEP BIOSCAN PRO")
+        self.setWindowTitle("EXPEDIA | PRECISION GENOMIC ANALYTIC ENGINE")
         self.resize(1280, 800)
         
         # Center on screen
@@ -195,7 +195,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(
             self.manual_interface, 
             FIF.BOOK_SHELF, 
-            "EXPEDIA: MANUAL", 
+            "EXPEDIA: SPECS", 
             NavigationItemPosition.BOTTOM
         )
 

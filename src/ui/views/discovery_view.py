@@ -58,7 +58,7 @@ class SessionSummaryPanel(QWidget):
         left_col.addWidget(self.card_richness)
         
         # 2. Novelty Ratio
-        self.card_novelty = self._create_kpi_card("NOVELTY RATIO", "0.0%", FIF.QUESTION)
+        self.card_novelty = self._create_kpi_card("NRGS RATIO (%)", "0.0%", FIF.QUESTION)
         left_col.addWidget(self.card_novelty)
         
         # 3. Shannon Index
@@ -361,13 +361,22 @@ class SessionSummaryPanel(QWidget):
 
 class NTUCard(CardWidget):
     """
-    @Bio-Taxon: NTU Satellite Cluster Card.
-    Represents an aggregated group of Non-Reference Taxa.
+    @Bio-Taxon: NRGS Taxonomic Cluster Card.
+    Represents an aggregated group of Non-Reference Genomic Signatures.
     """
     view_manifold_signal = Signal(dict)
 
     def __init__(self, ntu_data, parent=None):
         super().__init__(parent)
+        # Apply Sharp/Solid Style
+        self.setStyleSheet(f"""
+            NTUCard {{
+                background-color: {app_config.THEME_COLORS['sidebar']};
+                border: 1px solid {app_config.THEME_COLORS['border']};
+                border-radius: 0px;
+            }}
+        """)
+        
         self.ntu_data = ntu_data
         self.setFixedSize(360, 240) # Standard Card Size
         
@@ -375,10 +384,10 @@ class NTUCard(CardWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(6)
         
-        # 1. Header: EXPEDIA-NTU ID
-        ntu_id = ntu_data.get("ntu_id", "UNKNOWN-NTU")
-        if "EXPEDIA-NTU" not in ntu_id:
-             ntu_id = f"EXPEDIA-NTU-{ntu_id}"
+        # 1. Header: EXPEDIA-NRGS ID
+        ntu_id = ntu_data.get("ntu_id", "UNKNOWN-NRGS")
+        if "EXPEDIA-NRGS" not in ntu_id:
+             ntu_id = f"EXPEDIA-NRGS-{ntu_id}"
              
         self.id_label = SubtitleLabel(ntu_id, self)
         self.id_label.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-family: 'Consolas'; font-weight: bold; font-size: 13px;")

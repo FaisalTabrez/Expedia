@@ -195,6 +195,15 @@ class DiscoveryCard(CardWidget):
 
     def __init__(self, result_data, parent=None):
         super().__init__(parent)
+        # Apply Sharp/Solid Style
+        self.setStyleSheet(f"""
+            DiscoveryCard {{
+                background-color: {app_config.THEME_COLORS['sidebar']};
+                border: 1px solid {app_config.THEME_COLORS['border']};
+                border-radius: 0px;
+            }}
+        """)
+        
         self.result_data = result_data
         self.setFixedSize(340, 140)  # Slightly taller for breadcrumbs
         
@@ -335,11 +344,11 @@ class BatchSummary(QFrame):
         self.separator.setFixedHeight(16)
         self.separator.setStyleSheet("color: #444;")
         
-        self.novel_label = CaptionLabel("NOVEL ENTITIES: 0", self)
+        self.novel_label = CaptionLabel("NRGS (NON-REF): 0", self)
         self.novel_label.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-weight: bold; font-family: 'Consolas';")
         
         # Action
-        self.report_btn = PrimaryPushButton(FIF.SHARE, "EXPORT EXPEDITION DATA", self)
+        self.report_btn = PrimaryPushButton(FIF.SHARE, "EXPORT GENOMIC DATASET", self)
         self.report_btn.setFixedSize(240, 32)
         self.report_btn.clicked.connect(self.request_report.emit)
         
@@ -355,7 +364,7 @@ class BatchSummary(QFrame):
         self.total_count = total
         self.novel_count = novel
         self.total_label.setText(f"TOTAL SEQUENCES: {self.total_count}")
-        self.novel_label.setText(f"NOVEL ENTITIES: {self.novel_count}")
+        self.novel_label.setText(f"NRGS (NON-REF): {self.novel_count}")
 
 class MonitorView(QWidget):
     """
@@ -379,7 +388,7 @@ class MonitorView(QWidget):
         # 1. Header
         self.header_layout = QVBoxLayout()
         self.title = TitleLabel("EXPEDIA: GENOMIC SIGNAL MONITOR", self)
-        self.subtitle = SubtitleLabel("CURRENT EXPEDITION: ACTIVE BATCH", self)
+        self.subtitle = SubtitleLabel("CURRENT GENOMIC DATASET: ACTIVE BATCH", self)
         self.subtitle.setStyleSheet("color: #888;")
         
         self.header_layout.addWidget(self.title)
@@ -411,16 +420,16 @@ class MonitorView(QWidget):
         self.scroll_area.setWidget(self.feed_container)
         
         # 4. Terminal Box
-        self.terminal_label = CaptionLabel("SYSTEM LOGS", self)
+        self.terminal_label = CaptionLabel("SYSTEM OPERATIONS LOG", self)
         self.terminal_output = QTextEdit(self)
         self.terminal_output.setReadOnly(True)
         self.terminal_output.setFixedHeight(150)
         self.terminal_output.setStyleSheet(f"""
             QTextEdit {{
-                background-color: #05080F;
+                background-color: #0D0D0D;
                 color: #00FF00;
                 font-family: 'Consolas', 'Courier New', monospace;
-                border: 1px solid #333;
+                border: 1px solid {app_config.THEME_COLORS['border']};
                 border-radius: 5px;
                 font-size: 11px;
             }}
