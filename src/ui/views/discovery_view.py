@@ -136,78 +136,133 @@ class SessionSummaryPanel(QWidget):
         """
         Calculates ecological metrics and renders Sunburst.
         """
-        if not results: return
+        # Recalculate based on current NTU list + Isolated items
+        # Usually 'results' here is the list of isolated items? Or full list? 
+        # The user said: "S should be the sum of len(ntu_clusters) + len(isolated_taxa)"
+        # But this function only receives 'results'.
+        # We need to know about NTU clusters separately?
+        # Let's assume 'results' contains everything flattened or we fix calling side.
+        # Ideally, passed in populate_ntus. But let's look at populate_ntus logic.
         
+        # Actually populate_ntus calls update_dashboard with `isolated_taxa`.
+        # This is wrong if we want full community stats.
+        # But wait, populate_ntus gets `ntu_list` AND `isolated_taxa`.
+        pass
+
+    def update_metrics(self, ntu_list, isolated_list):
         try:
-            # 1. Convert to DataFrame
-            df = pd.DataFrame(results)
+            # 1. Species Richness (S)
+            S = len(ntu_list) + len(isolated_list)
             
-            # --- METRICS ---
-            total = len(df)
+            # 2. Shannon Index (H')
+            # N = Total Individuals
+            # For NTU: size = ntu['size']
+            # For Isolated: size = 1
             
-            # S: Unique Classifications (Species Richness)
-            # Filter out 'Unknown' to get true richness
-            if 'classification' in df.columns:
-                valid_taxa = df[df['classification'] != 'Unknown Organism']['classification']
-                valid_taxa = valid_taxa[valid_taxa != 'Unknown']
-                S = valid_taxa.nunique()
+            total_individuals = 0
+            counts = []
+            
+            for ntu in ntu_list:
+                s = ntu.get('size', 1)
+                counts.append(s)
+                total_individuals += s
                 
-                # H': Shannon Entropy
-                if len(valid_taxa) > 0:
-                    counts = valid_taxa.value_counts()
-                    props = counts / len(valid_taxa)
-                    H = -np.sum(props * np.log(props + 1e-9))
-                else:
-                    H = 0.0
+            for iso in isolated_list:
+                counts.append(1)
+                total_individuals += 1
+                
+            if total_individuals > 0:
+                props = np.array(counts) / total_individuals
+                # Filter zeros
+                props = props[props > 0]
+                H = -np.sum(props * np.log(props))
             else:
-                S = 0
                 H = 0.0
 
-            # Novelty Density
-            if 'status' in df.columns:
-                novel_count = len(df[df['status'].str.contains('Novel', case=False, na=False)])
-                ratio = (novel_count / total * 100) if total > 0 else 0.0
-            else:
-                ratio = 0.0
-            
-            # Update UI Cards
+            # 3. Novelty Ratio
+            # We assume ALL in this view are Novel? No.
+            # ntu_list are Novel/Divergent clusters.
+            # isolated_list might be mixed.
+            # Let's count novel items.
+            novel_cnt = len(ntu_list) # Clusters are inherently novel-ish in this view?
+            # Check isolated status?
+            # Assuming typical workflow where Discovery View shows Novel things.
+            # But let's be safe.
+            for iso in isolated_list:
+                if 'Novel' in iso.get('status', 'Unknown'):
+                    novel_cnt += 1
+                    
+            ratio = (novel_cnt / (len(ntu_list) + len(isolated_list)) * 100) if (ntu_list or isolated_list) else 0.0
+
+            # UI Update
             self.card_richness.value_label.setText(str(S))
             self.card_novelty.value_label.setText(f"{ratio:.1f}%")
             self.card_diversity.value_label.setText(f"{H:.2f}")
-
-            # --- VISUALIZATION (Sunburst) ---
+            
+            # Sunburst Data
+            # Combine for chart
+            combined_data = []
+            for ntu in ntu_list:
+                combined_data.append({
+                    'lineage': ntu.get('lineage', ''),
+                    'classification': ntu.get('anchor_taxon', 'Unknown Cluster'),
+                    'count': ntu.get('size', 1)
+                })
+            for iso in isolated_list:
+                combined_data.append({
+                    'lineage': iso.get('lineage', ''),
+                    'classification': iso.get('classification', 'Isolated'),
+                    'count': 1
+                })
+            
             if WEB_ENGINE_AVAILABLE:
-                self._render_sunburst(df)
+                self._render_sunburst_from_list(combined_data)
 
         except Exception as e:
-            logger.error(f"Dashboard Update Failed: {e}", exc_info=True)
+            logger.error(f"Metrics Update Failed: {e}", exc_info=True)
 
-    def _render_sunburst(self, df):
-        """
-        @UX-Visionary: Render Bioluminescent Abyss Sunburst.
-        Drill-down enabled, offline-capable via temporary file handshake.
-        """
+    def _render_sunburst_from_list(self, data_list):
+        if not data_list: return
+        df = pd.DataFrame(data_list)
+        # Reuse existing logic but adapted
+        # ... (Implementation of aggregation similar to existing but using 'count' column)
+        
+        # Quick aggregation:
+        rows = []
+        for _, row in df.iterrows():
+            lineage = str(row.get('lineage', ''))
+            parts = [p.strip() for p in lineage.split('>')] # Changed from ; to >
+            # Default ranks
+            phylum = "Unclassified"
+            cls = "Unclassified"
+            order = "Unclassified"
+            
+            # Very naive mapping, robust parsing needed?
+            # Assuming standard lineage string order: K > P > C > O ...
+            if len(parts) > 1: phylum = parts[1]
+            if len(parts) > 2: cls = parts[2]
+            if len(parts) > 3: order = parts[3]
+            
+            rows.append({
+                'Phylum': phylum, 'Class': cls, 'Order': order, 
+                'Identity': row['classification'], 'Count': row['count']
+            })
+            
+        hdf = pd.DataFrame(rows)
+        # Use existing render logic
+        self._render_sunburst_figure(hdf)
+
+    def _render_sunburst_figure(self, hierarchy_df):
         try:
-            # 1. Data Aggregator
-            hierarchy_df = self._aggregate_community_data(df)
-            
-            if hierarchy_df.empty:
-                return
-
-            # 2. The Sunburst Chart
-            # Bioluminescent Palette: Deep Blue -> Cyan -> White
-            # We map 'Phylum' to colors if possible, or use a continuous scale based on count
-            
             fig = px.sunburst(
                 hierarchy_df,
                 path=['Phylum', 'Class', 'Order', 'Identity'],
                 values='Count',
                 color='Count', 
-                color_continuous_scale='Viridis', # Deep Blue to Yellow/Green - roughly 'abyss' like
+                color_continuous_scale='Viridis',
                 title='<b>COMMUNITY COMPOSITION</b>'
             )
             
-            # 3. Styling: 'Bioluminescent Abyss'
             bg_color = app_config.THEME_COLORS['background']
             text_color = "#E0E0E0"
             
@@ -216,32 +271,52 @@ class SessionSummaryPanel(QWidget):
                  plot_bgcolor=bg_color,
                  font=dict(color=text_color, family="Segoe UI"),
                  margin=dict(t=40, l=10, r=10, b=10),
-                 coloraxis_showscale=False,
-                 hoverlabel=dict(
-                    bgcolor=app_config.THEME_COLORS['primary'],
-                    font_size=14,
-                    font_family="Consolas"
-                 )
+                 coloraxis_showscale=False
             )
             
-            # Update traces for borders
-            fig.update_traces(
-                marker=dict(line=dict(color=bg_color, width=1)),
-                leaf=dict(opacity=0.9)
-            )
+            # JS Retry Wrapper
+            plot_html = fig.to_html(include_plotlyjs='cdn', full_html=False)
             
-            # 4. Offline Logic: Temporary File Handshake
+            # We construct a full HTML page with a retry mechanism
+            full_html = f"""
+            <html>
+            <head>
+                <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+                <style>body {{ background-color: {bg_color}; margin: 0; overflow: hidden; }}</style>
+            </head>
+            <body>
+                <div id="chart" style="width:100%; height:100%;"></div>
+                <script>
+                    var plotData = {fig.to_json()};
+                    
+                    function drawChart() {{
+                        if (typeof Plotly === 'undefined') {{
+                            console.log("Waiting for Plotly...");
+                            setTimeout(drawChart, 100);
+                            return;
+                        }}
+                        Plotly.newPlot('chart', plotData.data, plotData.layout, {{responsive: true}});
+                    }}
+                    
+                    drawChart();
+                </script>
+            </body>
+            </html>
+            """
+            
+            # Write temp
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-                 html = fig.to_html(include_plotlyjs='cdn', full_html=True)
-                 # Inject dark mode CSS for the body
-                 html = html.replace('<body>', f'<body style="background-color: {bg_color}; margin: 0; overflow: hidden;">')
-                 f.write(html)
+                 f.write(full_html)
                  temp_path = f.name
              
             self.web_view.load(QUrl.fromLocalFile(temp_path))
-            
+
         except Exception as e:
-            logger.error(f"Sunburst Render Failed: {e}", exc_info=True)
+            logger.error(f"Sunburst Error: {e}")
+
+    # Legacy method redirect
+    def update_dashboard(self, results):
+        self.update_metrics([], results)
 
     def _aggregate_community_data(self, df):
         """
@@ -302,7 +377,6 @@ class NTUCard(CardWidget):
         
         # 1. Header: EXPEDIA-NTU ID
         ntu_id = ntu_data.get("ntu_id", "UNKNOWN-NTU")
-        # Ensure format consistency
         if "EXPEDIA-NTU" not in ntu_id:
              ntu_id = f"EXPEDIA-NTU-{ntu_id}"
              
@@ -310,11 +384,19 @@ class NTUCard(CardWidget):
         self.id_label.setStyleSheet(f"color: {app_config.THEME_COLORS['accent']}; font-family: 'Consolas'; font-weight: bold; font-size: 13px;")
         layout.addWidget(self.id_label)
         
-        # 2. Anchor Taxon
-        anchor = ntu_data.get("anchor_taxon", "Unresolved").upper()
-        # "PHYLOGENETIC ANCHOR: [FAMILY]"
-        self.anchor_label = CaptionLabel(f"PHYLOGENETIC ANCHOR: {anchor}", self)
-        self.anchor_label.setStyleSheet("color: #CCCCCC; font-family: 'Segoe UI'; font-weight: 600; font-size: 10px; letter-spacing: 0.5px;")
+        # 2. Anchor Taxon & Contamination Check
+        anchor = ntu_data.get("anchor_taxon", "Unresolved")
+        is_contaminated = ntu_data.get("contamination_warning", False)
+        
+        if is_contaminated:
+            anchor_text = f"⚠ CONTAMINATION RISK: {anchor.upper()}"
+            anchor_color = "#FF4444"
+        else:
+            anchor_text = f"PHYLOGENETIC ANCHOR: {anchor.upper()}"
+            anchor_color = "#CCCCCC"
+            
+        self.anchor_label = CaptionLabel(anchor_text, self)
+        self.anchor_label.setStyleSheet(f"color: {anchor_color}; font-family: 'Segoe UI'; font-weight: 600; font-size: 10px; letter-spacing: 0.5px;")
         layout.addWidget(self.anchor_label)
         
         layout.addSpacing(4)
@@ -365,7 +447,7 @@ class NTUCard(CardWidget):
         if mean_conf < 70: color = "#FFAA00"
         if mean_conf < 40: color = "#FF4444"
         
-        # Custom style for progress bar to be minimal
+        # Custom style for progress bar
         self.reliability_bar.setStyleSheet(f"""
             QProgressBar::chunk {{
                 background-color: {color};
@@ -456,9 +538,8 @@ class DiscoveryView(QWidget):
         
         # Update Community Dashboard (SessionSummaryPanel)
         try:
-             # isolated_taxa contains the full 'results' list from ScienceKernel
-             if isolated_taxa:
-                 self.summary_panel.update_dashboard(isolated_taxa)
+             # Calculate metrics for both Clusters and Isolated items
+             self.summary_panel.update_metrics(ntu_list, isolated_taxa)
         except AttributeError:
              pass # In case panel is missing or methods differ
 

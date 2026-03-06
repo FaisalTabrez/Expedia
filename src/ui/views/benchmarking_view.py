@@ -2,12 +2,24 @@ import logging
 import shutil
 import time
 import psutil
-from PySide6.QtCore import Qt, QTimer
+import tempfile
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel
 )
-from PySide6.QtWebEngineWidgets import QWebEngineView
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    WEB_ENGINE_AVAILABLE = True
+except ImportError:
+    WEB_ENGINE_AVAILABLE = False
+    class QWebEngineView(QWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            QVBoxLayout(self).addWidget(QLabel("Visualization Unavailable", self))
+        def load(self, url): pass
+        def setHtml(self, html, baseUrl=None): pass
+
 from qfluentwidgets import (
     TitleLabel, SubtitleLabel, CaptionLabel, 
     CardWidget, ProgressBar, FluentIcon as FIF,
@@ -151,52 +163,116 @@ class BenchmarkingView(QWidget):
         except Exception:
             self.iops_label.setText("N/A")
 
-    def _get_common_layout(self, title):
-        return dict(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color='#A0A0A0'),
-            title=dict(text=title, x=0.5, xanchor='center'),
-            margin=dict(l=40, r=40, t=50, b=40),
-            xaxis=dict(showgrid=False, zeroline=False),
-            yaxis=dict(showgrid=True, gridcolor='#333', zeroline=False),
-        )
+    def _render_chart_safely(self, fig, view_widget):
+        """
+        Renders a Plotly figure with JS retry logic and Dark Theme background.
+        """
+        if not WEB_ENGINE_AVAILABLE:
+            return
+
+        try:
+            bg_color = app_config.THEME_COLORS.get('background', '#1A1A1A')
+            
+            # Update figure layout for theme
+            fig.update_layout(
+                paper_bgcolor=bg_color,
+                plot_bgcolor=bg_color,
+                font=dict(color='#E0E0E0', family="Segoe UI"),
+                margin=dict(l=40, r=40, t=50, b=40),
+                xaxis=dict(showgrid=False, zeroline=False, color='#888'),
+                yaxis=dict(showgrid=True, gridcolor='#333', zeroline=False, color='#888'),
+                hoverlabel=dict(
+                    bgcolor=app_config.THEME_COLORS['primary'],
+                    font_size=14,
+                    font_family="Consolas"
+                )
+            )
+
+            # Generate HTML with retry script
+            plot_json = fig.to_json()
+            
+            full_html = f"""
+            <html>
+            <head>
+                <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+                <style>body {{ background-color: {bg_color}; margin: 0; overflow: hidden; }}</style>
+            </head>
+            <body>
+                <div id="chart" style="width:100%; height:100%;"></div>
+                <script>
+                    var plotData = {plot_json};
+                    
+                    function drawChart() {{
+                        if (typeof Plotly === 'undefined') {{
+                            console.log("Waiting for Plotly...");
+                            setTimeout(drawChart, 100);
+                            return;
+                        }}
+                        Plotly.newPlot('chart', plotData.data, plotData.layout, {{responsive: true}});
+                    }}
+                    
+                    drawChart();
+                </script>
+            </body>
+            </html>
+            """
+            
+            # Write to temp file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                 f.write(full_html)
+                 temp_path = f.name
+             
+            view_widget.load(QUrl.fromLocalFile(temp_path))
+
+        except Exception as e:
+            logger.error(f"Chart Render Failed: {e}")
 
     def render_latency_chart(self):
-        fig = go.Figure(data=[
-            go.Bar(
-                name='Inference Time',
-                x=['BLAST (Sequence Alignment)', 'EXPEDIA (Vector Search)'],
-                y=[300, 0.01], # seconds (5 mins vs 10ms)
-                marker_color=['#555555', app_config.THEME_COLORS['primary']],
-                text=['300s', '0.01s'],
-                textposition='auto',
+        try:
+            fig = go.Figure(data=[
+                go.Bar(
+                    name='Inference Time',
+                    x=['BLAST (Sequence Alignment)', 'EXPEDIA (Vector Search)'],
+                    y=[300, 0.01], # seconds (5 mins vs 10ms)
+                    marker=dict(
+                        color=['#555555', app_config.THEME_COLORS['primary']],
+                        line=dict(color=app_config.THEME_COLORS['foreground'], width=1)
+                    ),
+                    text=['300s', '0.01s'],
+                    textposition='auto',
+                )
+            ])
+            
+            fig.update_layout(
+                title=dict(text="QUERY LATENCY (Log Scale)", x=0.5, xanchor='center'),
+                yaxis=dict(type='log', title='Seconds')
             )
-        ])
-        
-        layout = self._get_common_layout("QUERY LATENCY (Log Scale)")
-        layout['yaxis']['type'] = 'log'
-        layout['yaxis']['title'] = 'Seconds'
-        fig.update_layout(layout)
-        
-        html = fig.to_html(include_plotlyjs='cdn', full_html=True)
-        self.chart_latency.setHtml(html)
+            
+            self._render_chart_safely(fig, self.chart_latency)
+        except Exception as e:
+            logger.error(f"Latency Chart Error: {e}")
 
     def render_horizon_chart(self):
-        fig = go.Figure(data=[
-            go.Bar(
-                name='Capacity',
-                x=['EXPEDIA (Current)', 'EXPEDIA ARRAY (Goal)'],
-                y=[100000, 4200000],
-                marker_color=[app_config.THEME_COLORS['accent'], '#2ecc71'], # Pink vs Green
-                text=['100k Vectors', '4.2M Vectors'],
-                textposition='auto',
+        try:
+            fig = go.Figure(data=[
+                go.Bar(
+                    name='Capacity',
+                    x=['EXPEDIA (Current)', 'EXPEDIA ARRAY (Goal)'],
+                    y=[100000, 4200000],
+                    marker=dict(
+                        color=[app_config.THEME_COLORS['accent'], '#2ecc71'], # Pink vs Green
+                        line=dict(color=app_config.THEME_COLORS['foreground'], width=1)
+                    ),
+                    text=['100k Vectors', '4.2M Vectors'],
+                    textposition='auto',
+                )
+            ])
+            
+            fig.update_layout(
+                 title=dict(text="DATABASE SCALABILITY HORIZON", x=0.5, xanchor='center'),
+                 yaxis=dict(title='Vector Capacity')
             )
-        ])
-        
-        layout = self._get_common_layout("DATABASE SCALABILITY HORIZON")
-        layout['yaxis']['title'] = 'Vector Capacity'
-        fig.update_layout(layout)
-        
-        html = fig.to_html(include_plotlyjs='cdn', full_html=True)
-        self.chart_horizon.setHtml(html)
+            
+            self._render_chart_safely(fig, self.chart_horizon)
+        except Exception as e:
+            logger.error(f"Horizon Chart Error: {e}")

@@ -180,25 +180,58 @@ class TaxonomyEngine:
         # 88 - 93%: NOVEL GENUS
         # 75 - 88%: NOVEL FAMILY/ORDER
         # < 75%: EXTREME NOVELTY (DARK TAXA)
+
+        # Helper for lowest confident rank name
+        def _get_lowest_solid_rank():
+            # Iterate ranks from Species up to Kingdom
+            for r in ['Species', 'Genus', 'Family', 'Order', 'Class', 'Phylum']:
+                # Find the item in consensus_path.
+                # Assuming consensus_path is ordered Kingdom -> Species...
+                # We need to look backwards.
+                # Actually consensus_path construction order is top-down (Kingdom...Species).
+                pass
+            
+            # Simple reverse scan
+            for p in reversed(consensus_path):
+                if not p.startswith("["):
+                    return p
+            return "Unknown"
+
+        last_solid_name = self._get_safe_name(consensus_path, '')
+        
+        # Contamination Logic
+        contamination_warning = False
+        TERRESTRIAL_BLACKLIST = [
+            'homo sapiens', 'human', 'rodentia', 'mus musculus', 'insecta', 
+            'hymenoptera', 'eulophidae', 'diptera', 'drosophila', 'canis', 'felis',
+            'bos taurus', 'gallus gallus', 'sus scrofa', 'arachnida'
+        ]
+        
+        # Check consensus path for terrestrial signatures
+        for term in consensus_path:
+            clean_term = term.replace("[","").replace("]","").lower()
+            if clean_term in TERRESTRIAL_BLACKLIST:
+                contamination_warning = True
+                break
         
         if top_sim > 0.97:
             lineage_status = "IDENTIFIED"
             classification = df.iloc[0].get('classification', 'Unknown')
         elif top_sim >= 0.93:
             lineage_status = "DIVERGENT SPECIES"
-            # Name: "Genus sp. (cf. Closest)"
             genus_name = self._get_safe_name(consensus_path, 'Genus')
-            classification = f"{genus_name} sp."
+            classification = f"{genus_name} sp. (Divergent)"
         elif top_sim >= 0.88:
             lineage_status = "NOVEL GENUS"
             family_name = self._get_safe_name(consensus_path, 'Family')
-            classification = f"Novel Genus ({family_name})"
+            classification = f"Novel Genus in {family_name}"
         elif top_sim >= 0.75:
             lineage_status = "NOVEL FAMILY/ORDER"
-            classification = "Novel Order/Family"
+            order_name = self._get_safe_name(consensus_path, 'Order')
+            classification = f"Novel Cluster in {order_name}"
         else:
             lineage_status = "EXTREME NOVELTY (DARK TAXA)"
-            classification = "Unknown Biological Entity"
+            classification = "Unknown Biological Entity (Dark Taxa)"
 
         # Build Lineage String
         lineage_str = " > ".join(consensus_path) if consensus_path else "Unresolved Lineage"
@@ -208,6 +241,7 @@ class TaxonomyEngine:
             "anchor_rank": anchor_rank,
             "lineage_status": lineage_status,
             "classification": classification,
+            "contamination_warning": contamination_warning,
             "confidence": top_sim,
             "confidence_per_rank": confidence_per_rank,
             "status": "Identified" if lineage_status == "IDENTIFIED" else "Novel"
