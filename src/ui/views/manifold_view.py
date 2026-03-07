@@ -49,6 +49,7 @@ from qfluentwidgets import (
     SubtitleLabel, ToolButton, FluentIcon as FIF, InfoBar, InfoBarPosition
 )
 import plotly.graph_objects as go
+import plotly.express as px
 # PCA Removed (Avalanche Standard UMAP handled in Kernel)
 # from sklearn.decomposition import PCA
 
@@ -254,54 +255,86 @@ class ManifoldView(QWidget):
                 self.show_empty_state()
                 return
 
+            q_coords = query_point.get("coords")
+            if not q_coords: return
+
             # 2. Create Plotly Figure
             fig = go.Figure()
 
-            # ... (Existing Trace Logic) ...
-            # A. Neighbors
-            if neighbors:
-                x_vals = [n['coords'][0] for n in neighbors if n.get('coords')]
-                y_vals = [n['coords'][1] for n in neighbors if n.get('coords')]
-                z_vals = [n['coords'][2] for n in neighbors if n.get('coords')]
+            # A. Discrete Color Mapping (Phylum-based)
+            # Use Plotly Qualitative Palette
+            palette = px.colors.qualitative.Plotly + px.colors.qualitative.Bold
+            
+            # Group by Phylum/Taxonomy for Legend & Coloring
+            groups = {}
+            for n in neighbors:
+                if not n.get('coords'): continue
                 
-                text_vals = []
-                for n in neighbors:
-                    # Robust Tooltip Construction: Pulls from Lineage/Phylum
-                    cls = n.get('classification', 'Unknown Entity')
-                    lineage_info = n.get('lineage') or n.get('phylum') or "Context Unresolved"
-                    text_vals.append(f"<b>{cls}</b><br>{lineage_info}")
+                # Extract Phylum from Lineage or Classification
+                lineage = n.get('lineage', '')
+                phylum = "Unclassified"
                 
-                # Dynamic Coloring based on classification if available, else depth/index
-                # Using 'Viridis' color scale as requested for better contrast
-                colors = np.linspace(0, 1, len(neighbors))
+                # Try simple parsing 'p__Phylum'
+                if 'p__' in lineage:
+                    parts = lineage.split(';')
+                    for p in parts:
+                        if p.strip().startswith('p__'):
+                            phylum = p.strip().split('__')[1]
+                            break
+                elif n.get('phylum'):
+                     phylum = n.get('phylum')
+                else:
+                    # Fallback to first word of classification
+                    cls = n.get('classification', '')
+                    if cls and cls != 'Unknown Entity':
+                        phylum = cls.split(' ')[0]
                 
+                if phylum not in groups: groups[phylum] = []
+                groups[phylum].append(n)
+            
+            # Add Trace per Group
+            sorted_phyla = sorted(groups.keys())
+            for idx, phylum in enumerate(sorted_phyla):
+                group_neighbors = groups[phylum]
+                color = palette[idx % len(palette)]
+                
+                x_vals, y_vals, z_vals = [], [], []
+                custom_data = [] # [ID, RANK, DIST]
+                
+                for n in group_neighbors:
+                    c = n['coords']
+                    x_vals.append(c[0])
+                    y_vals.append(c[1])
+                    z_vals.append(c[2])
+                    
+                    nid = n.get('id', 'Unknown')
+                    # Rank heuristic
+                    lin = n.get('lineage', '')
+                    rank = "Species" if 's__' in lin else ("Genus" if 'g__' in lin else "Phylum")
+                    
+                    # Distance Calculation (Euclidean)
+                    dist = np.linalg.norm(np.array(c) - np.array(q_coords))
+                    
+                    custom_data.append([nid, rank, f"{dist:.4f}"])
+
                 fig.add_trace(go.Scatter3d(
                     x=x_vals, y=y_vals, z=z_vals,
                     mode='markers',
                     marker=dict(
-                        size=4,
-                        # Active Sequence (Bright Red/Pink)
-                    color=['#999999'] * neighborhood_size, # Dimmed Background
-                    opacity=0.3,
-                    line=dict(width=0)
-                ),
-                text=text_vals,
-                hovertemplate="<b>%{text}</b><extra></extra>",
-                name='Atlas Background' # Legend Name
-            ))
-            
-            # Reduce legend point size for background
-            # This is tricky in Plotly, often modifying trace updates later works best
-            # or relying on default small markers.
+                        size=3,
+                        color=color,
+                        opacity=0.7,
+                        line=dict(width=0)
+                    ),
+                    name=phylum,
+                    customdata=custom_data,
+                    hovertemplate="ID: %{customdata[0]}<br>RANK: %{customdata[1]}<br>DIST: %{customdata[2]}<extra></extra>"
+                ))
 
             # B. Query Point / Holotype Reference
-            q_coords = query_point.get("coords")
-            if not q_coords: return
-
             q_label = query_point.get("label", -1)
             # Neon Pink Pulsing Star for Holotype
             query_color = '#FF007A' 
-            symbol = 'cross' # Star-like
             
             fig.add_trace(go.Scatter3d(
                 x=[q_coords[0]], y=[q_coords[1]], z=[q_coords[2]],
@@ -320,8 +353,9 @@ class ManifoldView(QWidget):
             
             # C. Dashed Line (Evolutionary Distance)
             if neighbors:
-                nn = neighbors[0] 
-                nn_coords = nn.get('coords')
+                # Find closest neighbor across all groups
+                closest = min(neighbors, key=lambda n: np.linalg.norm(np.array(n['coords']) - np.array(q_coords)))
+                nn_coords = closest.get('coords')
                 if nn_coords:
                     fig.add_trace(go.Scatter3d(
                         x=[q_coords[0], nn_coords[0]],
@@ -329,11 +363,13 @@ class ManifoldView(QWidget):
                         z=[q_coords[2], nn_coords[2]],
                         mode='lines',
                         line=dict(color='#AAAAAA', width=3, dash='dash'),
-                        name='Min. Distance Vector'
+                        name='Min. Distance Vector',
+                        showlegend=False
                     ))
 
-            # D. Cluster Hull (Bioluminescent Aura)
+            # D. Cluster Hull (Bioluminescent Aura) - OPTIONAL
             if q_label != -1:
+                # Re-gather cluster points from neighbors list
                 cluster_points = [n['coords'] for n in neighbors if n.get('label') == q_label and n.get('coords')]
                 if len(cluster_points) > 4:
                      pts = np.array(cluster_points)
@@ -346,24 +382,26 @@ class ManifoldView(QWidget):
                             opacity=0.2,
                             color='#FF007A',
                             alphahull=7,
-                            name='Bioluminescent Aura'
+                            name='Bioluminescent Aura',
+                            showlegend=False
                          ))
                      except Exception as e: 
                         logger.warning(f"Hull generation failed: {e}")
             
-            # E. Consensus Annotation
+            # E. Consensus Annotation (Repositioned to Top Right)
             consensus_text = f"LOCAL CONSENSUS:<br>Divergent {consensus} Variant" if consensus != "Analyzing..." else "LOCAL CONSENSUS:<br>Analyzing..."
             
             fig.add_annotation(
                 text=consensus_text,
                 xref="paper", yref="paper",
-                x=0.02, y=0.98,
+                x=0.95, y=0.95,
+                xanchor='right', yanchor='top',
                 showarrow=False,
                 font=dict(family="Consolas", size=14, color="#00E5FF"),
-                align="left",
-                bgcolor=app_config.THEME_COLORS['background'],
+                align="right",
+                bgcolor="rgba(15, 15, 15, 0.8)",
                 bordercolor="#0078D4",
-                borderwidth=1,
+                borderwidth=2,
                 borderpad=10
             )
 
@@ -389,10 +427,16 @@ class ManifoldView(QWidget):
                 bordercolor="#0078D4",
                 font=dict(color="white")
             ),
+            # Legend Styling (Taxonomic Legend on Right Sidebar)
+            showlegend=True,
             legend=dict(
-                 itemsizing='constant',
-                 x=0, y=1,
-                 bgcolor='rgba(0,0,0,0)'
+                yanchor='middle',
+                y=0.5,
+                xanchor='left',
+                x=1.02,
+                font=dict(color='#E0E0E0', size=10),
+                bgcolor='rgba(0,0,0,0)',
+                itemsizing='constant'
             ),
             scene=dict(
                 xaxis=dict(showgrid=False, zeroline=False, showbackground=False, visible=False),
@@ -401,8 +445,7 @@ class ManifoldView(QWidget):
                 bgcolor=app_config.THEME_COLORS['background'],
                 aspectmode='data' # Scale axes to match data range (prevents squashing)
             ),
-            margin=dict(l=0, r=0, t=10, b=0),
-            showlegend=True
+            margin=dict(l=0, r=0, t=10, b=0)
         )
 
         if WEB_ENGINE_AVAILABLE:
