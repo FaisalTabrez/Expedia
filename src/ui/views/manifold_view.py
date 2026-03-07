@@ -280,15 +280,19 @@ class ManifoldView(QWidget):
                     mode='markers',
                     marker=dict(
                         size=4,
-                        color=colors,
-                        colorscale='Viridis', # Bioluminescent Green/Blue/Purple
-                        opacity=0.8,
-                        line=dict(width=0)
-                    ),
-                    text=text_vals,
-                    hovertemplate="%{text}<extra></extra>",
-                    name='Neighborhood'
-                ))
+                        # Active Sequence (Bright Red/Pink)
+                    color=['#999999'] * neighborhood_size, # Dimmed Background
+                    opacity=0.3,
+                    line=dict(width=0)
+                ),
+                text=text_vals,
+                hovertemplate="<b>%{text}</b><extra></extra>",
+                name='Atlas Background' # Legend Name
+            ))
+            
+            # Reduce legend point size for background
+            # This is tricky in Plotly, often modifying trace updates later works best
+            # or relying on default small markers.
 
             # B. Query Point / Holotype Reference
             q_coords = query_point.get("coords")
@@ -305,12 +309,13 @@ class ManifoldView(QWidget):
                 marker=dict(
                     size=12,
                     color=query_color,
-                    symbol='diamond-open', # Distinctive Holotype Marker
+                    symbol='diamond-open',
                     opacity=1.0,
                     line=dict(color='#FFFFFF', width=2)
                 ),
                 text=["HOLOTYPE REFERENCE (Analysed Seq)"],
-                name='Holotype Reference'
+                hovertemplate="<b>%{text}</b><extra></extra>",
+                name='Active Sequence'
             ))
             
             # C. Dashed Line (Evolutionary Distance)
@@ -347,15 +352,17 @@ class ManifoldView(QWidget):
                         logger.warning(f"Hull generation failed: {e}")
             
             # E. Consensus Annotation
+            consensus_text = f"LOCAL CONSENSUS:<br>Divergent {consensus} Variant" if consensus != "Analyzing..." else "LOCAL CONSENSUS:<br>Analyzing..."
+            
             fig.add_annotation(
-                text=f"LOCAL CONSENSUS:<br>{consensus}",
+                text=consensus_text,
                 xref="paper", yref="paper",
                 x=0.02, y=0.98,
                 showarrow=False,
                 font=dict(family="Consolas", size=14, color="#00E5FF"),
                 align="left",
                 bgcolor=app_config.THEME_COLORS['background'],
-                bordercolor="#333",
+                bordercolor="#0078D4",
                 borderwidth=1,
                 borderpad=10
             )
@@ -376,6 +383,17 @@ class ManifoldView(QWidget):
             paper_bgcolor=app_config.THEME_COLORS['background'],
             plot_bgcolor=app_config.THEME_COLORS['background'],
             font=dict(color='#A0A0A0'),
+            # Hover Label Sync
+            hoverlabel=dict(
+                bgcolor="#1A1A1A",
+                bordercolor="#0078D4",
+                font=dict(color="white")
+            ),
+            legend=dict(
+                 itemsizing='constant',
+                 x=0, y=1,
+                 bgcolor='rgba(0,0,0,0)'
+            ),
             scene=dict(
                 xaxis=dict(showgrid=False, zeroline=False, showbackground=False, visible=False),
                 yaxis=dict(showgrid=False, zeroline=False, showbackground=False, visible=False),
@@ -384,11 +402,7 @@ class ManifoldView(QWidget):
                 aspectmode='data' # Scale axes to match data range (prevents squashing)
             ),
             margin=dict(l=0, r=0, t=10, b=0),
-            showlegend=True,
-            legend=dict(
-                x=0, y=1,
-                bgcolor='rgba(0,0,0,0)'
-            )
+            showlegend=True
         )
 
         if WEB_ENGINE_AVAILABLE:

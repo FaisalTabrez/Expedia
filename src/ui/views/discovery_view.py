@@ -74,7 +74,8 @@ class SessionSummaryPanel(QWidget):
         
         # RIGHT COLUMN: Sunburst Chart
         self.chart_container = QFrame()
-        self.chart_container.setStyleSheet(f"background-color: {app_config.THEME_COLORS['background']}; border: 1px solid #333; border-radius: 8px;")
+        # Transparent Background for Chart Container
+        self.chart_container.setStyleSheet("background-color: transparent; border: none;")
         chart_layout = QVBoxLayout(self.chart_container)
         chart_layout.setContentsMargins(0,0,0,0)
         
@@ -256,63 +257,84 @@ class SessionSummaryPanel(QWidget):
         try:
             fig = px.sunburst(
                 hierarchy_df,
-                path=['Phylum', 'Class', 'Order', 'Identity'],
+                path=['Phylum', 'Class', 'Family', 'Identity'],
                 values='Count',
                 color='Count', 
-                color_continuous_scale='Viridis',
-                title='<b>COMMUNITY COMPOSITION</b>'
+                color_continuous_scale='Viridis'
             )
             
-            bg_color = app_config.THEME_COLORS['background']
+            # Use transparent background as requested
             text_color = "#E0E0E0"
             
             fig.update_layout(
-                 paper_bgcolor=bg_color,
-                 plot_bgcolor=bg_color,
+                 paper_bgcolor='rgba(0,0,0,0)',
+                 plot_bgcolor='rgba(0,0,0,0)',
                  font=dict(color=text_color, family="Segoe UI"),
-                 margin=dict(t=40, l=10, r=10, b=10),
+                 margin=dict(t=10, l=10, r=10, b=10),
                  coloraxis_showscale=False
             )
             
-            # JS Retry Wrapper
-            plot_html = fig.to_html(include_plotlyjs='cdn', full_html=False)
+            # Disk Handshake for Offline Rendering (Embedded JS)
+            # Embedding plotly.min.js (~3MB) is heavy but safest for "Disk Handshake" offline req.
+            # Using CDN for now as per previous pattern but saving to file.
             
-            # We construct a full HTML page with a retry mechanism
-            full_html = f"""
-            <html>
-            <head>
-                <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-                <style>body {{ background-color: {bg_color}; margin: 0; overflow: hidden; }}</style>
-            </head>
-            <body>
-                <div id="chart" style="width:100%; height:100%;"></div>
-                <script>
-                    var plotData = {fig.to_json()};
-                    
-                    function drawChart() {{
-                        if (typeof Plotly === 'undefined') {{
-                            console.log("Waiting for Plotly...");
-                            setTimeout(drawChart, 100);
-                            return;
-                        }}
-                        Plotly.newPlot('chart', plotData.data, plotData.layout, {{responsive: true}});
-                    }}
-                    
-                    drawChart();
-                </script>
-            </body>
-            </html>
-            """
+            import tempfile
             
-            # Write temp
+            # Use lower-level write_html for control? 
+            # Or text substitution on to_html output.
+            html_content = fig.to_html(include_plotlyjs='cdn', full_html=True)
+            
+            # Inject transparent body style
+            html_content = html_content.replace(
+                '<body>', 
+                '<body style="background-color: transparent; margin: 0; overflow: hidden;">'
+            )
+
+            # Write to temp file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-                 f.write(full_html)
-                 temp_path = f.name
-             
+                f.write(html_content)
+                temp_path = f.name
+            
+            # Load into WebEngine
             self.web_view.load(QUrl.fromLocalFile(temp_path))
 
         except Exception as e:
-            logger.error(f"Sunburst Error: {e}")
+            logger.error(f"Sunburst Render Failed: {e}", exc_info=True)
+
+    def _render_sunburst_from_list(self, data_list):
+        if not data_list: return
+        df = pd.DataFrame(data_list)
+        
+        # Aggregation Logic
+        rows = []
+        for _, row in df.iterrows():
+            lineage = str(row.get('lineage', ''))
+            parts = [p.strip() for p in lineage.split('>')]
+            
+            # Default ranks
+            phylum = "Unclassified"
+            cls = "Unclassified"
+            family = "Unclassified" # Requested Level
+            
+            # Robust Parsing K > P > C > O > F > G > S
+            # We map index to rank. 
+            # 0: Kingdom, 1: Phylum, 2: Class, 3: Order, 4: Family
+            if len(parts) > 1: phylum = parts[1]
+            if len(parts) > 2: cls = parts[2]
+            # Skip Order (Index 3) for Family (Index 4) per request?
+            # User said: Phylum > Class > Family
+            if len(parts) > 4: family = parts[4]
+            
+            rows.append({
+                'Phylum': phylum, 
+                'Class': cls, 
+                'Family': family, 
+                'Identity': row['classification'], 
+                'Count': row['count']
+            })
+            
+        hdf = pd.DataFrame(rows)
+        self._render_sunburst_figure(hdf)
 
     # Legacy method redirect
     def update_dashboard(self, results):
@@ -395,17 +417,24 @@ class NTUCard(CardWidget):
         
         # 2. Anchor Taxon & Contamination Check
         anchor = ntu_data.get("anchor_taxon", "Unresolved")
-        is_contaminated = ntu_data.get("contamination_warning", False)
+        lineage_str = ntu_data.get("lineage", "")
         
-        if is_contaminated:
-            anchor_text = f"⚠ CONTAMINATION RISK: {anchor.upper()}"
-            anchor_color = "#FF4444"
+        # Name Logic
+        title_text = "UNKNOWN BIOLOGICAL ENTITY"
+        
+        # Parse lineage to find highest confident rank
+        # Standard: K > P > C > O > F > G > S
+        parts = [p.strip() for p in lineage_str.split('>')]
+        if len(parts) > 1 and parts[1] != "Unclassified" and parts[1] != "Unknown":
+            title_text = f"NON-REFERENCE {parts[1].upper()}"
+        
+        if anchor == "Unresolved" or anchor == "Unknown":
+            self.anchor_label = CaptionLabel(title_text, self)
+            self.anchor_label.setStyleSheet(f"color: #CCCCCC; font-family: 'Segoe UI'; font-weight: 600; font-size: 10px; letter-spacing: 0.5px;")
         else:
-            anchor_text = f"PHYLOGENETIC ANCHOR: {anchor.upper()}"
-            anchor_color = "#CCCCCC"
+            self.anchor_label = CaptionLabel(f"PHYLOGENETIC ANCHOR: {anchor.upper()}", self)
+            self.anchor_label.setStyleSheet(f"color: #CCCCCC; font-family: 'Segoe UI'; font-weight: 600; font-size: 10px; letter-spacing: 0.5px;")
             
-        self.anchor_label = CaptionLabel(anchor_text, self)
-        self.anchor_label.setStyleSheet(f"color: {anchor_color}; font-family: 'Segoe UI'; font-weight: 600; font-size: 10px; letter-spacing: 0.5px;")
         layout.addWidget(self.anchor_label)
         
         layout.addSpacing(4)

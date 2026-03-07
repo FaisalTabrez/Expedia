@@ -265,6 +265,19 @@ class DiscoveryCard(CardWidget):
         
         # Classification
         class_text = result_data.get("classification", "Unclassified").upper()
+        # Clean Terminology
+        if "(DARK TAXA)" in class_text:
+            class_text = class_text.replace("(DARK TAXA)", "(NRGS)")
+            
+        # Advanced NRGS Naming
+        lineage_str = result_data.get("predicted_lineage", {}).get("lineage_string", "")
+        if "NON-REFERENCE" in class_text or "NRGS" in class_text:
+             # Try to extract Phylum
+             parts = [p.strip() for p in lineage_str.split('>')]
+             # 0:k, 1:p
+             if len(parts) > 1 and parts[1] not in ["Unclassified", "Unknown"]:
+                 class_text = f"NON-REFERENCE {parts[1].upper()}"
+
         self.class_label = SubtitleLabel(class_text, self)
         if is_novel:
             self.class_label.setStyleSheet(f"color: {accent_color}; font-weight: bold;")
@@ -277,12 +290,11 @@ class DiscoveryCard(CardWidget):
              # Escape existing HTML chars first? Assumed safe.
              import re
              # Replace [Name] with <i>Name (?)</i>
-             # Use span to color differently?
              smart_lineage_text = re.sub(r"\[(.*?)\]", r"<i style='color:#FFFF00'>\1 (?)</i>", smart_lineage_text)
-             # Replace separators
-             smart_lineage_text = smart_lineage_text.replace(">", "<span style='color:#444'>›</span>")
+             # Replace separators with clean arrows
+             smart_lineage_text = smart_lineage_text.replace(">", "<span style='color:#444'> › </span>")
         else:
-            smart_lineage_text = "Unknown Lineage"
+            smart_lineage_text = "Metazoa › Unresolved Lineage"
             
         self.lineage_label = QLabel(self)
         self.lineage_label.setText(smart_lineage_text)
