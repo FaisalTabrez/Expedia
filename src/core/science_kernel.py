@@ -123,6 +123,134 @@ class ScienceKernel:
         self.db = None
         self.taxonomy = None
         self.discovery = None
+        self._background_cache = None
+
+    @staticmethod
+    def _extract_top_rank(lineage: str, classification: str) -> str:
+        """Extract a stable taxonomic bucket for stratified sampling."""
+        if lineage:
+            if 'p__' in lineage:
+                for token in lineage.split(';'):
+                    token = token.strip()
+                    if token.startswith('p__'):
+                        parts = token.split('__', 1)
+                        if len(parts) > 1 and parts[1]:
+                            return parts[1]
+            # Generic lineage formats: Kingdom;Phylum;Class... or K > P > C...
+            if ';' in lineage:
+                parts = [p.strip() for p in lineage.split(';') if p.strip()]
+                if len(parts) > 1:
+                    return parts[1]
+                if parts:
+                    return parts[0]
+            if '>' in lineage:
+                parts = [p.strip() for p in lineage.split('>') if p.strip()]
+                if len(parts) > 1:
+                    return parts[1]
+                if parts:
+                    return parts[0]
+
+        if classification and classification not in ("Unknown", "Unknown Organism"):
+            return classification.split(' ')[0]
+        return "Unclassified"
+
+    def _build_stratified_background_sample(self, sample_size: int = 5000) -> list:
+        """
+        @Vector-Ops: Builds a 5,000-point background sample using stratified pulls
+        over broad atlas coverage via random-probe ANN queries.
+        """
+        if not self.db:
+            return []
+
+        if self._background_cache is not None and len(self._background_cache) >= sample_size:
+            return self._background_cache[:sample_size]
+
+        candidate_rows = []
+        seen_ids = set()
+        dims = int(app_config.EMBEDDING_DIMENSION_PADDED)
+        probe_count = 64
+        probe_k = 200
+
+        try:
+            for _ in range(probe_count):
+                probe = np.random.randn(dims).astype(np.float32)
+                norm = np.linalg.norm(probe)
+                if norm > 0:
+                    probe = probe / norm
+
+                df = self.db.vector_search(probe, top_k=probe_k)
+                if df.empty:
+                    continue
+
+                cols = {c.lower(): c for c in df.columns}
+                id_col = cols.get('id') or cols.get('accessionid') or cols.get('seq_id')
+                class_col = cols.get('classification') or cols.get('scientificname')
+                lineage_col = cols.get('lineage') or cols.get('taxonomy') or cols.get('phylum')
+
+                if not id_col or 'vector' not in cols:
+                    continue
+
+                for _, row in df.iterrows():
+                    rid = str(row.get(id_col, ''))
+                    if not rid or rid in seen_ids:
+                        continue
+
+                    vec = row.get(cols['vector'])
+                    if vec is None:
+                        continue
+
+                    seen_ids.add(rid)
+                    cls = str(row.get(class_col, 'Unknown Organism')) if class_col else 'Unknown Organism'
+                    lin = str(row.get(lineage_col, '')) if lineage_col else ''
+                    candidate_rows.append({
+                        "id": rid,
+                        "classification": cls,
+                        "lineage": lin,
+                        "vector": np.array(vec, dtype=np.float32)
+                    })
+
+            if not candidate_rows:
+                return []
+
+            strata = {}
+            for item in candidate_rows:
+                bucket = self._extract_top_rank(item.get("lineage", ""), item.get("classification", ""))
+                strata.setdefault(bucket, []).append(item)
+
+            per_bucket = max(1, sample_size // max(1, len(strata)))
+            selected = []
+            for bucket_items in strata.values():
+                if len(bucket_items) <= per_bucket:
+                    selected.extend(bucket_items)
+                else:
+                    idxs = np.random.choice(len(bucket_items), size=per_bucket, replace=False)
+                    selected.extend([bucket_items[i] for i in idxs])
+
+            if len(selected) < sample_size:
+                selected_ids = {item["id"] for item in selected}
+                remaining = [r for r in candidate_rows if r["id"] not in selected_ids]
+                if remaining:
+                    need = min(sample_size - len(selected), len(remaining))
+                    idxs = np.random.choice(len(remaining), size=need, replace=False)
+                    selected.extend([remaining[i] for i in idxs])
+
+            selected = selected[:sample_size]
+            background = []
+            for item in selected:
+                vec = item["vector"]
+                # A stable pseudo-layout for background cloud projection.
+                background.append({
+                    "id": item["id"],
+                    "classification": item.get("classification", "Unknown Organism"),
+                    "lineage": item.get("lineage", ""),
+                    "coords": [float(vec[0]), float(vec[1]), float(vec[2])]
+                })
+
+            self._background_cache = background
+            return background
+        except Exception as sample_err:
+            logger.warning(f"Background stratified sampling failed: {sample_err}")
+            return []
 
     def initialize(self):
         """
@@ -181,7 +309,7 @@ class ScienceKernel:
                     self.process_fasta(command.get("file_path"))
                 elif cmd_type == "get_localized_topology":
                     vector = command.get("vector")
-                    k = command.get("k", 500)
+                    k = command.get("k", 1000)
                     record_id = command.get("id", "Unknown")
                     self.get_localized_topology(vector, record_id, k)
                 elif cmd_type == "shutdown":
@@ -404,7 +532,7 @@ class ScienceKernel:
         except Exception as e:
             logger.error(f"Emit Error: {e}")
 
-    def get_localized_topology(self, vector, record_id="Unknown", k=500):
+    def get_localized_topology(self, vector, record_id="Unknown", k=1000):
         """
         @Data-Ops: Micro-Topology Engine.
         Fetches {k} neighbors, runs HDBSCAN on (Query + k), and calculates PCA.
@@ -593,6 +721,7 @@ class ScienceKernel:
                 "status": "success",
                 "consensus": consensus_summary,
                 "predicted_lineage": predicted_lineage_obj,
+                "background": self._build_stratified_background_sample(sample_size=5000),
                 "query": {
                     "coords": query_pc,
                     "label": int(query_label) if 'labels' in locals() else -1,

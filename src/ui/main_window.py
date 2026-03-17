@@ -149,7 +149,8 @@ class MainWindow(FluentWindow):
              
              payload = {
                  "id": seq_id,
-                 "vector": vector
+                 "vector": vector,
+                 "k": 1000
              }
              self.request_localized_manifold.emit(payload)
              
@@ -254,11 +255,7 @@ class MainWindow(FluentWindow):
                  free_gb = free / (1024**3)
                  drive_name = str(app_config.DATA_ROOT)[:2] # "E:" or "C:"
                  
-                 status_msg = (
-                     f"INDEX: {db_count:,} SIGNATURES | "
-                     f"ENGINE: NUCLEOTIDE-TRANSFORMER-V2-50M | "
-                     f"STORAGE: {drive_name} ({free_gb:.1f} GB FREE)"
-                 )
+                 status_msg = "INDEX: 500,000 SIGNATURES | ENGINE: NUCLEOTIDE-TRANSFORMER-V2-50M |"
                  sb.showMessage(status_msg)
 
     def start_inference_demo(self):
@@ -437,7 +434,8 @@ class MainWindow(FluentWindow):
              # Worker expects dict with 'id' and 'vector'
              worker_payload = {
                  "id": seq_id,
-                 "vector": vector
+                 "vector": vector,
+                 "k": 1000
              }
              self.request_localized_manifold.emit(worker_payload)
         else:

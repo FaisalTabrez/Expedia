@@ -248,6 +248,7 @@ class ManifoldView(QWidget):
 
             query_point = data.get("query")
             neighbors = data.get("neighbors", [])
+            background_points = data.get("background", [])
             consensus = data.get("consensus", "Analyzing...")
             
             if not query_point or not neighbors:
@@ -260,6 +261,22 @@ class ManifoldView(QWidget):
 
             # 2. Create Plotly Figure
             fig = go.Figure()
+
+            # A0. Background Manifold Cloud (Stratified 5,000-point sample)
+            if background_points:
+                bg_x = [p['coords'][0] for p in background_points if p.get('coords')]
+                bg_y = [p['coords'][1] for p in background_points if p.get('coords')]
+                bg_z = [p['coords'][2] for p in background_points if p.get('coords')]
+                fig.add_trace(go.Scatter3d(
+                    x=bg_x,
+                    y=bg_y,
+                    z=bg_z,
+                    mode='markers',
+                    marker=dict(size=2, color='#4D4D4D', opacity=0.18, line=dict(width=0)),
+                    hoverinfo='skip',
+                    showlegend=False,
+                    name='Atlas Background'
+                ))
 
             # A. Discrete Color Mapping (Phylum-based)
             # Use Plotly Qualitative Palette

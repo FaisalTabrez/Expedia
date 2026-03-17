@@ -103,6 +103,9 @@ class DiscoveryWorker(QObject):
                 bufsize=1, # Line buffered
                 encoding='utf-8' # Force UTF-8 for JSON
             )
+
+            if self._process.stdout is None:
+                raise RuntimeError("Science Kernel stdout pipe not available.")
             
             # Handshake Loop (~50s of Imports)
             while True:
@@ -276,6 +279,7 @@ class DiscoveryWorker(QObject):
 
         vector = payload.get("vector")
         record_id = payload.get("id", "Unknown")
+        k_neighbors = int(payload.get("k", 1000))
         
         try:
             self._ensure_kernel_started()
@@ -289,7 +293,7 @@ class DiscoveryWorker(QObject):
                 "command": "get_localized_topology",
                 "vector": vector,
                 "id": record_id,
-                "k": 500
+                "k": k_neighbors
             })
             self._process.stdin.write(cmd + "\n")
             self._process.stdin.flush()

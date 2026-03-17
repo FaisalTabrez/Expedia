@@ -418,6 +418,10 @@ class NTUCard(CardWidget):
         # 2. Anchor Taxon & Contamination Check
         anchor = ntu_data.get("anchor_taxon", "Unresolved")
         lineage_str = ntu_data.get("lineage", "")
+
+        lineage_parts = self._normalize_lineage(lineage_str)
+        phylum_name = lineage_parts[1]
+        class_name = lineage_parts[2]
         
         # Name Logic
         title_text = "UNKNOWN BIOLOGICAL ENTITY"
@@ -436,6 +440,21 @@ class NTUCard(CardWidget):
             self.anchor_label.setStyleSheet(f"color: #CCCCCC; font-family: 'Segoe UI'; font-weight: 600; font-size: 10px; letter-spacing: 0.5px;")
             
         layout.addWidget(self.anchor_label)
+
+        # 2B. Visual hierarchy: Phylum + Class prominence
+        self.rank_focus_label = SubtitleLabel(f"{phylum_name} | {class_name}", self)
+        self.rank_focus_label.setStyleSheet("color: #E0E0E0; font-size: 12px; font-weight: 700;")
+        layout.addWidget(self.rank_focus_label)
+
+        # 2C. Full deep lineage breadcrumb (K > P > C > O > F > G > S)
+        breadcrumb_html = self._build_breadcrumb_html(lineage_parts)
+        self.breadcrumb_label = QLabel(breadcrumb_html, self)
+        self.breadcrumb_label.setWordWrap(True)
+        self.breadcrumb_label.setTextFormat(Qt.TextFormat.RichText)
+        self.breadcrumb_label.setStyleSheet(
+            "font-family: 'Consolas'; font-size: 9px; color: #9AA0A6;"
+        )
+        layout.addWidget(self.breadcrumb_label)
         
         layout.addSpacing(4)
         
@@ -516,6 +535,28 @@ class NTUCard(CardWidget):
              
         self.btn_explore.clicked.connect(self._on_explore)
         layout.addWidget(self.btn_explore)
+
+    @staticmethod
+    def _normalize_lineage(lineage_str: str) -> list:
+        """Returns exactly 7 lineage slots in K>P>C>O>F>G>S order."""
+        parts = [p.strip() for p in str(lineage_str).split('>') if p.strip()]
+        if len(parts) < 7:
+            parts.extend([f"[Unclassified {r}]" for r in ["Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"][len(parts):]])
+        return parts[:7]
+
+    @staticmethod
+    def _build_breadcrumb_html(parts: list) -> str:
+        """Highlights novel segments in neon pink while keeping full breadcrumb visible."""
+        styled = []
+        for seg in parts:
+            seg_text = str(seg)
+            upper = seg_text.upper()
+            is_novel = ("NOVEL" in upper) or ("[UNCLASSIFIED" in upper)
+            if is_novel:
+                styled.append(f"<span style='color:#FF007A;font-weight:700;'>{seg_text}</span>")
+            else:
+                styled.append(f"<span style='color:#9AA0A6;'>{seg_text}</span>")
+        return " &gt; ".join(styled)
 
     def _on_explore(self):
         """Prepare data payload for Manifold View."""
