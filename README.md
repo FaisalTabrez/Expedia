@@ -20,11 +20,10 @@ EXPEDIA implements a rigorous, non-linear manifold learning pipeline to separate
 2.  **Topological Projection (UMAP 10D)**: Reduces dimensionality while preserving local manifold structure ($k=15$, adaptive initialization).
 3.  **Density Clustering (HDBSCAN)**: Detects high-density clusters of novel signatures that defy standard classification taxonomies.
 
-### 3. Triple-Tier Inference Engine
-Taxonomic assignment follows a strict hierarchical consensus protocol:
-*   **Tier 1: Vector Consensus ($k=50$)**: Majority voting among the 50 nearest neighbors in the embedded space.
-*   **Tier 2: WoRMS Validation**: Cross-referencing against the World Register of Marine Species to ensure nomenclatural validity.
-*   **Tier 3: TaxonKit Reconstruction**: Lineage expansion and rank normalization for incomplete taxonomic strings.
+### 3. Dual-Tier High-Density Inference
+Taxonomic assignment follows a high-density consensus protocol:
+*   **Tier 1: Stochastic Vector Consensus ($k=50$)**: Leveraging the 500,000-signature manifold for phylogenetic anchoring.
+*   **Tier 2: Standardized Reconstruction (TaxonKit)**: Mapping consensus results to global NCBI metadata standards.
 
 ---
 

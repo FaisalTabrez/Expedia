@@ -61,22 +61,6 @@ class PreflightDiagnostics:
         else:
             self.results.append(f"Atlas DB: {count} rows [FAIL]")
 
-    def check_worms_csv(self):
-        path = app_config.WORMS_CSV
-        if not path.exists():
-            self.results.append("WoRMS CSV not found.")
-            return
-        try:
-            # Only count lines, skip header
-            with open(path, 'r', encoding='utf-8') as f:
-                n = sum(1 for _ in f) - 1
-            if n >= 760:
-                self.results.append(f"WoRMS CSV: {n} records [OK]")
-            else:
-                self.results.append(f"WoRMS CSV: {n} records [FAIL]")
-        except Exception as e:
-            self.results.append(f"WoRMS CSV error: {e}")
-
     def io_benchmark(self):
         if not self.db.table:
             self.results.append("I/O Benchmark: DB Table not available.")
@@ -112,7 +96,6 @@ class PreflightDiagnostics:
         self.results.clear()
         self.check_taxonkit()
         self.check_db_rows()
-        self.check_worms_csv()
         self.check_model_weights()
         self.io_benchmark()
         return self.results

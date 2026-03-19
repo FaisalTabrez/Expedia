@@ -22,6 +22,6 @@
 - **Optimization**: Sub-10ms search latency via disk-native memory mapping.
 
 ### @Bio-Taxon (Taxonomy Specialist)
-- **Focus**: Triple-Tier Hybrid Inference.
-- **Role**: Implements Consensus logic ($k=50$), WoRMS Oracle fuzzy matching, and TaxonKit lineage expansion.
+- **Focus**: Dual-Tier High-Density Inference.
+- **Role**: Implements Consensus logic ($k=50$) and TaxonKit lineage expansion.
 - **Discovery**: HDBSCAN clustering for Non-Reference Genomic Signatures (NRGS).

@@ -8,26 +8,14 @@ logger = logging.getLogger("EXPEDIA.Taxonomy")
 
 class TaxonomyEngine:
     """
-    @Bio-Taxon: Triple-Tier Hybrid Inference Engine.
-    Tier 1: Consensus (Vector Neighbors)
-    Tier 2: WoRMS Fuzzy Match
-    Tier 3: Lineage Expansion (TaxonKit placeholder)
+    @Bio-Taxon: Dual-Tier High-Density Inference Engine.
+    Tier 1: Stochastic Vector Consensus (k=50)
+    Tier 2: Standardized Reconstruction (TaxonKit)
     """
 
     def __init__(self):
-        # Load WoRMS Reference Database
-        self.worms_ref_data = set()
-        if app_config.WORMS_CSV.exists():
-            try:
-                df = pd.read_csv(app_config.WORMS_CSV)
-                # Normalize and store valid names
-                if 'ScientificName' in df.columns:
-                    self.worms_ref_data = set(df['ScientificName'].str.lower().str.strip().tolist())
-                logger.info(f"WoRMS Oracle Loaded ({len(self.worms_ref_data)} records).")
-            except Exception as e:
-                logger.warning(f"Failed to load WoRMS CSV: {e}")
-        else:
-            logger.warning("WoRMS Reference CSV not found.")
+        # Initialize Dual-Tier Engine
+        logger.info("[SYSTEM] Dual-Tier Inference Engine active (Vector Consensus + TaxonKit).")
 
     def analyze_sample(self, neighbors_df: pd.DataFrame, sequence_str: str) -> dict:
         """
@@ -56,7 +44,7 @@ class TaxonomyEngine:
             "classification": prediction['classification'],
             "confidence": prediction['confidence'],
             "lineage": prediction['lineage_string'],
-            "workflow": "Tier 1 (Consensus)",
+            "workflow": "Tier 1 (Vector Consensus) + Tier 2 (TaxonKit)",
             "predicted_lineage": {
                 "status": prediction['lineage_status'], # CONFIRMED / DIVERGENT / NOVEL
                 "lineage_string": prediction['lineage_string'],
@@ -67,12 +55,13 @@ class TaxonomyEngine:
 
     def resolve_identity(self, df: pd.DataFrame) -> dict:
         """
-        @Bio-Taxon: 7-Level Resolution Engine.
-        Computes hierarchical majority vote per rank (K -> S), applies
-        rank-specific confidence decay logic, and returns a lineage-aware
-        identity payload for downstream UI rendering.
+        @Bio-Taxon: Dual-Tier Resolution Model.
+        Tier 1: Performs k=50 majority vote using the 500k Atlas metadata.
+        Tier 2: Uses the Tier 1 result to reconstruct the full 7-level lineage via TaxonKit.
         """
-        return self.predict_lineage(df)
+        # Ensure we are using top 50 for pure consensus if larger set provided
+        consensus_pool = df.head(50)
+        return self.predict_lineage(consensus_pool)
 
     def predict_lineage(self, df: pd.DataFrame) -> dict:
         """

@@ -70,7 +70,6 @@ BASE_DRIVE = DATA_ROOT # Alias check
 VECTOR_DB_PATH = DATA_ROOT / "data/db"
 TAXONKIT_EXE = DATA_ROOT / "taxonkit.exe"
 TAXDATA_DIR = DATA_ROOT / "data/taxonomy_db"
-WORMS_CSV = TAXDATA_DIR / "worms_deepsea_ref.csv"
 
 # AI Model Anchor
 LOCAL_MODEL_PATH = DATA_ROOT / "resources/models/nt_v2_50m"
@@ -107,11 +106,7 @@ def verify_auxiliaries():
     if not TAXONKIT_EXE.exists():
         missing.append(f"TaxonKit Binary not found at: {TAXONKIT_EXE}")
 
-    # Check 3: WoRMS Reference
-    if not WORMS_CSV.exists():
-        missing.append(f"WoRMS Reference CSV not found at: {WORMS_CSV}")
-
-    # Check 4: AI Model Weights (Air-Gapped)
+    # Check 3: AI Model Weights (Air-Gapped)
     if not LOCAL_MODEL_PATH.exists():
         missing.append(f"Nucleotide Transformer weights not found at: {LOCAL_MODEL_PATH}")
         
