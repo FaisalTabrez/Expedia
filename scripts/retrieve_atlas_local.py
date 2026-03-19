@@ -12,10 +12,10 @@ from Bio import Entrez, SeqIO
 Entrez.email = "data-ops@deepbio.scan"  # TODO: Change to your email
 TARGET_COUNT = 500_000
 SHARD_SIZE = 100_000
-FETCH_BATCH_SIZE = 1000  # Reduced to 1000 for maximum stability on flaky networks
+FETCH_BATCH_SIZE = 200   # Smaller batch (200) to safely prevent IncompleteRead
 SHARDS_DIR = "shards_local"
 FORCE_REBUILD = False   # Resume capability: Don't delete good shards
-MAX_RETRIES = 10        # Heavy retry logic for DNS/Connection drops
+MAX_RETRIES = 12        # Heavy retry logic for DNS/Connection drops
 RETRY_BASE_DELAY = 5    # Start retrying sooner (5s, 10s, 20s...)
 
 # Taxonomic Ranks of Interest
