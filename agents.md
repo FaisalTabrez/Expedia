@@ -24,4 +24,4 @@
 ### @Bio-Taxon (Taxonomy Specialist)
 - **Focus**: Dual-Tier High-Density Inference.
 - **Role**: Implements Consensus logic ($k=50$) and TaxonKit lineage expansion.
-- **Discovery**: HDBSCAN clustering for Non-Reference Genomic Signatures (NRGS).
+- **Discovery**: HDBSCAN clustering for Non-Reference Genomic Signatures (NRGS).\n## 5.0 DATA ENGINEERING\n\n### 5.2 Genomic Denoising and Redundancy Elimination\n- **Discovery**: Detected 37.2% redundancy in raw benthic eDNA datasets (186,426 duplicate vectors removed).\n- **Implementation**: Utilized Polars LazyFrame for global cross-shard deduplication with LanceDB storage layer.\n- **Scientific Result**: The elimination of redundant vectors removed 'Centroid Bias,' allowing the Avalanche Discovery Engine to achieve higher resolution in identifying rare, low-abundance non-reference signatures.\n- **Status**: The 313,574 unique signatures represent a high-entropy reference manifold optimized for abyssal surveillance.

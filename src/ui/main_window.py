@@ -222,10 +222,6 @@ class MainWindow(FluentWindow):
             log("RESOURCES: TAXONKIT BINARY FOUND.")
         else:
             log("RESOURCES: TAXONKIT BINARY MISSING.")
-
-        if app_config.WORMS_CSV.exists():
-            # Mock count or read line count roughly
-            log("RESOURCES: WORMS ORACLE LOADED (763+ TAXA).")
         
         # Database Connection (reuse manifold's instance or creating new lightweight one)
         # Manifold view creates an AtlasManager instance on init.
@@ -255,7 +251,7 @@ class MainWindow(FluentWindow):
                  free_gb = free / (1024**3)
                  drive_name = str(app_config.DATA_ROOT)[:2] # "E:" or "C:"
                  
-                 status_msg = "INDEX: 500,000 SIGNATURES | ENGINE: NUCLEOTIDE-TRANSFORMER-V2-50M |"
+                 status_msg = "INDEX: 313,574 UNIQUE SIGNATURES | ENGINE: NUCLEOTIDE-TRANSFORMER-V2-50M |"
                  sb.showMessage(status_msg)
 
     def start_inference_demo(self):

@@ -78,12 +78,14 @@ LOCAL_MODEL_PATH = DATA_ROOT / "resources/models/nt_v2_50m"
 # DATABASE CONSTANTS
 # -----------------------------------------------------------------------------
 
-ATLAS_TABLE_NAME = "EXPEDIA_ATLAS_500K"
+ATLAS_TABLE_NAME = "EXPEDIA_ATLAS_500K_UNIQUE"
+# ATLAS_TABLE_NAME = "EXPEDIA_ATLAS_500K"
 REFERENCE_SIGNATURES_COUNT = 500_000
 
 # LanceDB Index Configuration (IVF-PQ)
 LANCEDB_PARTITIONS = 512
 LANCEDB_SUB_VECTORS = 96
+INDEX_SPEC = "IVF-512, PQ-96"
 EMBEDDING_DIMENSION_MODEL = 512
 EMBEDDING_DIMENSION_PADDED = 768
 
@@ -137,7 +139,7 @@ THRESHOLD_CONFIRMED = 0.95  # >95% for species confirmation
 THRESHOLD_NOVEL = 0.70      # <70% for Novel Taxonomic Units (NTUs)
 
 # Inference Logic
-CONSENSUS_K_NEIGHBORS = 50   # Number of neighbors for majority vote
+CONSENSUS_K_NEIGHBORS = 30   # Optimized for 313k Unique Index (was 50)
 
 # -----------------------------------------------------------------------------
 # UI/THEME CONFIGURATION
